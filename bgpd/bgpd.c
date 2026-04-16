@@ -365,6 +365,11 @@ static int bgp_router_id_set(struct bgp *bgp, const struct in_addr *id,
 		bgp_ls_export_bgp_topology(bgp);
 
 	hook_call(bgp_routerid_update, bgp, false);
+
+	/* Verify the global marking on per-neighbor clusters
+	 * the router-id is used as global cluster-id when not configured*/
+	per_neighbor_cluster_update_global_marking(bgp, false);
+
 	return 0;
 }
 
@@ -654,6 +659,10 @@ void bgp_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id)
 	IPV4_ADDR_COPY(&bgp->cluster_id, cluster_id);
 	bgp_config_set(bgp, BGP_CONFIG_CLUSTER_ID);
 
+	/* update per neighbor cluster so the default flag matches 
+	 * the default cluster*/
+	per_neighbor_cluster_update_global_marking(bgp, true);
+
 	/* Clear all IBGP peer. */
 	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
 		if (peer->sort != BGP_PEER_IBGP)
@@ -675,6 +684,7 @@ void bgp_cluster_id_unset(struct bgp *bgp)
 
 	bgp->cluster_id.s_addr = 0;
 	bgp_config_unset(bgp, BGP_CONFIG_CLUSTER_ID);
+	per_neighbor_cluster_update_global_marking(bgp, true);
 
 	/* Clear all IBGP peer. */
 	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
@@ -2374,30 +2384,52 @@ void peer_as_change(struct peer *peer, as_t as, enum peer_asn_type as_type,
 	if (newtype != BGP_PEER_IBGP) {
 		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_UNICAST],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_UNICAST], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_MULTICAST],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_MULTICAST],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_LABELED_UNICAST],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_LABELED_UNICAST],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_MPLS_VPN],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_MPLS_VPN],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_ENCAP],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_ENCAP], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_FLOWSPEC],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP][SAFI_FLOWSPEC],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_UNICAST],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_UNICAST],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_MULTICAST],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_MULTICAST],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_LABELED_UNICAST],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_LABELED_UNICAST],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_MPLS_VPN],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_MPLS_VPN],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_ENCAP],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_ENCAP], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_FLOWSPEC],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_IP6][SAFI_FLOWSPEC],
+			   PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 		UNSET_FLAG(peer->af_flags[AFI_L2VPN][SAFI_EVPN],
 			   PEER_FLAG_REFLECTOR_CLIENT);
+		UNSET_FLAG(peer->af_flags[AFI_L2VPN][SAFI_EVPN], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
 	}
 }
 
@@ -2527,6 +2559,10 @@ static void peer_group2peer_config_copy_af(struct peer_group *group,
 	if (!CHECK_FLAG(pflags_ovrd, PEER_FLAG_WEIGHT))
 		PEER_ATTR_INHERIT(peer, group, weight[afi][safi]);
 
+	/*per neighbor cluster-id*/
+	if (!CHECK_FLAG(pflags_ovrd, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)) {
+		PEER_ATTR_INHERIT(peer, group, per_neighbor_cluster[afi][safi]);
+	}
 	/* default-originate route-map */
 	if (!CHECK_FLAG(pflags_ovrd, PEER_FLAG_DEFAULT_ORIGINATE)) {
 		PEER_STR_ATTR_INHERIT(peer, group, default_rmap[afi][safi].name,
@@ -3717,6 +3753,71 @@ int peer_group_bind(struct bgp *bgp, union sockunion *su, struct peer *peer,
 	return 0;
 }
 
+static struct cluster *per_neighbor_cluster_new(void)
+{
+	struct cluster *cluster;
+	cluster = XCALLOC(MTYPE_PER_NEIGHBOR_CLUSTER, sizeof(struct cluster));
+	cluster->references = 1;
+	return cluster;
+}
+
+static void per_neighbor_cluster_free(struct cluster *cluster)
+{
+	list_delete(&cluster->peers);
+	XFREE(MTYPE_PER_NEIGHBOR_CLUSTER, cluster);
+}
+
+struct cluster *per_neighbor_cluster_lookup(struct bgp *bgp, const struct in_addr *cluster_id)
+{
+	struct cluster *cluster;
+	struct listnode *node, *nnode;
+
+	for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
+		if (IPV4_ADDR_SAME(&cluster->cluster_id, cluster_id))
+			return cluster;
+	}
+	return NULL;
+}
+
+/*check all per-neighbor clusters if one has the same id as the global one then mark it as global
+ * configuration of clusters marked as global are ignored, the configuration of the global cluster 
+ * is used instead */
+void per_neighbor_cluster_update_global_marking(struct bgp *bgp, bool modified_cluster_id)
+{
+	struct in_addr *cluster_id;
+	struct cluster *cluster;
+	struct listnode *node, *nnode;
+	struct peer *peer;
+	if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID)) {
+		/*if the attribute cluster-id hasn't been modified and is configured
+		 * then the global cluster id hasn't changed and ther is nothing to do*/
+		if (!modified_cluster_id) {
+			return;
+		}
+		cluster_id = &bgp->cluster_id;
+	} else
+		cluster_id = &bgp->router_id;
+
+	for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
+		if (IPV4_ADDR_SAME(&cluster->cluster_id, cluster_id)) {
+			SET_FLAG(cluster->flags, CLUSTER_FLAG_GLOBAL);
+		} else {
+			UNSET_FLAG(cluster->flags, CLUSTER_FLAG_GLOBAL);
+		}
+	}
+
+	/* Global cluster-id as changed :
+	 * Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+}
+
 static void bgp_startup_timer_expire(struct event *event)
 {
 	struct bgp *bgp;
@@ -3822,6 +3923,7 @@ static struct bgp *bgp_create(as_t *as, const char *name,
 	SET_FLAG(bgp->peer_self->cap, PEER_CAP_AS4_ADV);
 
 	bgp->peer = list_new();
+	bgp->per_neighbor_clusters = list_new();
 
 peer_init:
 	bgp->peer->cmp = (int (*)(void *, void *))peer_cmp;
@@ -4387,6 +4489,7 @@ int bgp_delete(struct bgp *bgp)
 	struct peer_connection *connection;
 	uint32_t b_ann_cnt = 0, b_l2_cnt = 0;
 	uint32_t a_ann_cnt = 0, a_l2_cnt = 0;
+	struct cluster *cluster;
 
 	assert(bgp);
 
@@ -4618,6 +4721,10 @@ int bgp_delete(struct bgp *bgp)
 
 	update_bgp_group_free(bgp);
 
+	/*Free per-neighbor clusters*/
+	for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, next, cluster))
+		per_neighbor_cluster_free(cluster);
+
 	/* Cancel peer connection errors event */
 	event_cancel(&bgp->t_conn_errors);
 
@@ -4782,6 +4889,7 @@ void bgp_free(struct bgp *bgp)
 
 	list_delete(&bgp->group);
 	list_delete(&bgp->peer);
+	list_delete(&bgp->per_neighbor_clusters);
 
 	hash_clean_and_free(&bgp->connectionhash, NULL);
 
@@ -5433,6 +5541,7 @@ static const struct peer_flag_action peer_af_flag_action_list[] = {
 	{ PEER_FLAG_CONFIG_ENCAPSULATION_SRV6, 0, peer_change_best_path },
 	{ PEER_FLAG_CONFIG_ENCAPSULATION_SRV6_RELAX, 0, peer_change_best_path },
 	{ PEER_FLAG_CONFIG_ENCAPSULATION_MPLS, 0, peer_change_best_path },
+	{ PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID, 0, peer_change_reset },
 	{ 0, 0, 0 }
 };
 
@@ -5786,7 +5895,7 @@ static int peer_af_flag_modify(struct peer *peer, afi_t afi, safi_t safi,
 	found = peer_flag_action_set(peer_af_flag_action_list, size, &action,
 				     flag);
 
-	/* Abort if flag action exists. */
+	/* Abort if no flag action exists. */
 	if (!found)
 		return BGP_ERR_INVALID_FLAG;
 
@@ -6761,6 +6870,163 @@ void peer_on_policy_change(struct peer *peer, afi_t afi, safi_t safi,
 	}
 }
 
+/* BGP's cluster-id control. */
+void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer,
+				 afi_t afi, safi_t safi)
+{
+	struct listnode *node, *nnode;
+	struct peer *member;
+	/* do nothing when the value is already configured as desired*/
+	if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID) &&
+	    IPV4_ADDR_SAME(&peer->per_neighbor_cluster[afi][safi], cluster_id))
+		return;
+
+	/*if there was another cluster configured previously*/
+	if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+		bgp_per_neighbor_cluster_id_delete(bgp, &peer->per_neighbor_cluster[afi][safi]);
+
+	/*create or add a new reference to the cluster and configure it*/
+	bgp_per_neighbor_cluster_id_add(bgp, cluster_id);
+	IPV4_ADDR_COPY(&peer->per_neighbor_cluster[afi][safi], cluster_id);
+	peer_af_flag_set(peer, afi, safi, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
+
+	/* Skip peer-group mechanics for regular peers. */
+	if (!CHECK_FLAG(peer->sflags, PEER_STATUS_GROUP)) {
+		/* Clear the one changed IBGP peer. */
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+		peer_notify_config_change(peer->connection);
+		return;
+	}
+	/*
+	 * Set configuration on all peer-group members, unless they are
+	 * explicitly overriding peer-group configuration.
+	 */
+	for (ALL_LIST_ELEMENTS(peer->group->peer, node, nnode, member)) {
+		/* Skip peers with overridden configuration. */
+		if (CHECK_FLAG(member->af_flags_override[afi][safi],
+			       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+			continue;
+
+		/* Set flag and configuration on peer-group member. */
+		if (!IPV4_ADDR_SAME(&member->per_neighbor_cluster[afi][safi], cluster_id)) {
+			member->per_neighbor_cluster[afi][safi] = *cluster_id;
+			peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+			peer_notify_config_change(peer->connection);
+		}
+	}
+}
+
+void bgp_neighbor_cluster_id_unset(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer,
+				   afi_t afi, safi_t safi)
+{
+	struct listnode *node, *nnode;
+	struct peer *member;
+
+	/* do nothing when the value is already configured as desired*/
+	if (!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+		return;
+
+	bgp_per_neighbor_cluster_id_delete(bgp, &peer->per_neighbor_cluster[afi][safi]);
+	peer_af_flag_unset(peer, afi, safi, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
+
+	/* Inherit configuration from peer-group if peer is member. */
+	if (peer_group_active(peer)) {
+		peer_af_flag_inherit(peer, afi, safi, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID);
+		PEER_ATTR_INHERIT(peer, peer->group, per_neighbor_cluster[afi][safi]);
+		return;
+	}
+
+	/* Skip peer-group mechanics for regular peers. */
+	if (!CHECK_FLAG(peer->sflags, PEER_STATUS_GROUP)) {
+		/* Clear the one changed IBGP peer. */
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+		peer_notify_config_change(peer->connection);
+		return;
+	}
+	/*
+	 * Set configuration on all peer-group members, unless they are
+	 * explicitly overriding peer-group configuration.
+	 */
+	for (ALL_LIST_ELEMENTS(peer->group->peer, node, nnode, member)) {
+		/* Skip peers with overridden configuration. */
+		if (CHECK_FLAG(member->af_flags_override[afi][safi],
+			       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+			continue;
+
+		/* clear all other member peers */
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+		peer_notify_config_change(peer->connection);
+	}
+}
+
+void bgp_per_neighbor_cluster_id_add(struct bgp *bgp, struct in_addr *cluster_id)
+{
+	struct cluster *cluster;
+	struct in_addr *global_cluster_id;
+	struct listnode *node, *nnode;
+	struct peer *peer;
+
+	cluster = per_neighbor_cluster_lookup(bgp, cluster_id);
+	if (cluster) {
+		cluster->references++;
+		return;
+	}
+
+	cluster = per_neighbor_cluster_new();
+	IPV4_ADDR_COPY(&cluster->cluster_id, cluster_id);
+	listnode_add_sort(bgp->per_neighbor_clusters, cluster);
+
+	/* if the cluster id is the same as the global cluster
+	 * set the flag to override that cluster with the global one*/
+	if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
+		global_cluster_id = &bgp->cluster_id;
+	else
+		global_cluster_id = &bgp->router_id;
+	if (IPV4_ADDR_SAME(global_cluster_id, cluster_id))
+		SET_FLAG(cluster->flags, CLUSTER_FLAG_GLOBAL);
+
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+}
+
+void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster_id)
+{
+	struct cluster *cluster;
+	struct listnode *cn;
+	struct listnode *node, *nnode;
+	struct peer *peer;
+
+	cluster = per_neighbor_cluster_lookup(bgp, cluster_id);
+	if (!cluster)
+		return;
+
+	/*decrease the number of refernces to the cluster*/
+	cluster->references--;
+	if (cluster->references)
+		return;
+
+	/*if there is no more references: delete the cluster*/
+	cn = listnode_lookup(bgp->per_neighbor_clusters, cluster);
+	list_delete_node(bgp->per_neighbor_clusters, cn);
+	per_neighbor_cluster_free(cluster);
+
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+}
 
 /* neighbor weight. */
 int peer_weight_set(struct peer *peer, afi_t afi, safi_t safi, uint16_t weight)
