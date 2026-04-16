@@ -5715,21 +5715,63 @@ bgp_size_t bgp_packet_attribute(struct bgp *bgp, struct peer *peer, struct strea
 
 		if (cluster) {
 			stream_putc(s, cluster->length + 4);
+			/*if the originator of the prefix has a per-neighbor cluster configured*/
+			if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT) &&
+			    CHECK_FLAG(from->af_flags[afi][safi],
+				       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)) {
+				stream_put_in_addr(s, &from->per_neighbor_cluster[afi][safi]);
+			}
+			/*if the originator of the prefix is a client of the default cluster*/
+			else if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)) {
+				if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID)) {
+					stream_put_in_addr(s, &bgp->cluster_id);
+				} else {
+					stream_put_in_addr(s, &bgp->router_id);
+				}
+			}
+			/*if the destination of the id has a per-neighbor cluster configured*/
+			else if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT) &&
+				 CHECK_FLAG(peer->af_flags[afi][safi],
+					    PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+				stream_put_in_addr(s, &peer->per_neighbor_cluster[afi][safi]);
+
 			/* If this peer configuration's parent BGP has
 			 * cluster_id. */
-			if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
+			else if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID)) {
 				stream_put_in_addr(s, &bgp->cluster_id);
-			else
+			} else {
 				stream_put_in_addr(s, &bgp->router_id);
+			}
 			stream_put(s, cluster->list, cluster->length);
 		} else {
 			stream_putc(s, 4);
+			/*if the originator of the prefix has a per-neighbor cluster configured*/
+			if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT) &&
+			    CHECK_FLAG(from->af_flags[afi][safi],
+				       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)) {
+				stream_put_in_addr(s, &from->per_neighbor_cluster[afi][safi]);
+			}
+			/*if the originator of the prefix is a client of the default cluster*/
+			else if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)) {
+				if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID)) {
+					stream_put_in_addr(s, &bgp->cluster_id);
+				} else {
+					stream_put_in_addr(s, &bgp->router_id);
+				}
+			}
+			/*if the destination of the id has a per-neighbor cluster configured*/
+			else if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT) &&
+				 CHECK_FLAG(peer->af_flags[afi][safi],
+					    PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+				stream_put_in_addr(s, &peer->per_neighbor_cluster[afi][safi]);
+
 			/* If this peer configuration's parent BGP has
 			 * cluster_id. */
-			if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
+			else if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID)) {
 				stream_put_in_addr(s, &bgp->cluster_id);
-			else
+			} else {
 				stream_put_in_addr(s, &bgp->router_id);
+			}
 		}
 	}
 
