@@ -633,8 +633,10 @@ struct bgp {
 	struct in_addr router_id_static;
 	struct in_addr router_id_zebra;
 
-	/* BGP route reflector cluster ID.  */
+	/* BGP route reflector default cluster ID.  */
 	struct in_addr cluster_id;
+
+	struct list *specific_clusters;
 
 	/* BGP confederation information.  */
 	as_t confed_id;
@@ -1928,9 +1930,13 @@ struct peer {
 #define PEER_FLAG_CONFIG_ENCAPSULATION_MPLS	  (1ULL << 34)
 #define PEER_FLAG_BGP_LS_IPV4			  (1ULL << 35)
 #define PEER_FLAG_BGP_LS_IPV6			  (1ULL << 36)
+#define PEER_FLAG_SPECIFIED_CLUSTER_ID (1ULL << 37)
 #define PEER_FLAG_ACCEPT_OWN (1ULL << 63)
 
 	enum bgp_addpath_strat addpath_type[AFI_MAX][SAFI_MAX];
+
+	/*specific cluster pour  chaque AFI-SAFI*/
+	struct in_addr specific_cluster[AFI_MAX][SAFI_MAX];
 
 	/* MD5 password */
 	char *password;
@@ -2337,6 +2343,22 @@ struct bgp_nlri {
 
 	/* Pointer to NLRI byte stream.  */
 	uint8_t *nlri;
+};
+
+/*This structure contains informations about a specific cluster*/
+struct cluster {
+	/*cluster-id*/
+	struct in_addr cluster_id;
+
+	/*flag for client-to-client reflection*/
+	uint8_t flags;
+#define BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER (1 << 0)
+#define BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED (1 << 1)
+#define CLUSTER_FLAG_GLOBAL (1<<2)
+
+	/*number of peers inside the cluster to be able to suppress the 
+	cluster when it becomes 0*/
+	uint64_t number_of_peers;
 };
 
 /* BGP versions.  */
