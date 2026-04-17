@@ -5382,6 +5382,44 @@ DEFUN (neighbor_remote_as,
 				  argv[idx_remote_as]->arg);
 }
 
+DEFPY (neighbor_cluster_id,
+	neighbor_cluster_id_cmd,
+	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id <A.B.C.D|(1-4294967295)>$id",
+	NO_STR
+	NEIGHBOR_STR
+	NEIGHBOR_ADDR_STR2
+	"Configure a specific cluster-id for the neighbor\n"
+	"Route-Reflector Cluster-id in IP address format\n"
+	"Route-Reflector Cluster-id as 32 bit quantity\n")
+{
+	struct in_addr cluster;
+	int ret;
+	struct peer *peer;
+	afi_t afi=bgp_node_afi(vty);
+	safi_t safi=bgp_node_safi(vty);
+	peer = peer_and_group_lookup_vty(vty, neighbor);
+	ret = inet_aton(id, &cluster);
+	if(!peer){
+		return CMD_WARNING_CONFIG_FAILED;
+	}
+	if(!ret){
+		vty_out(vty, "%% Malformed bgp cluster identifier\n");
+		return CMD_WARNING_CONFIG_FAILED;
+	}
+	if(!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)){
+		vty_out(vty, "%% configure as route-reflector client first\n");
+		return CMD_WARNING_CONFIG_FAILED;
+	}
+	
+	/*bgp_node_afi(vty),
+				    bgp_node_safi(vty),
+				    PEER_FLAG_REFLECTOR_CLIENT
+	return peer_remote_as_vty(vty, argv[idx_peer]->arg,
+				  argv[idx_remote_as]->arg);*/
+	vty_out(vty, "%% cA IMPLEMENTER\n");
+	return CMD_SUCCESS;
+}
+
 DEFPY (bgp_allow_martian,
        bgp_allow_martian_cmd,
        "[no]$no bgp allow-martian-nexthop",
@@ -22725,6 +22763,21 @@ void bgp_vty_init(void)
 	install_element(BGP_IPV6L_NODE, &neighbor_ecommunity_rpki_cmd);
 	install_element(BGP_VPNV4_NODE, &neighbor_ecommunity_rpki_cmd);
 	install_element(BGP_VPNV6_NODE, &neighbor_ecommunity_rpki_cmd);
+
+	/* "neighbor cluster-id" commands.*/
+	install_element(BGP_IPV4_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_IPV4M_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_IPV4L_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_IPV6_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_IPV6M_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_IPV6L_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_VPNV4_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_VPNV6_NODE, &neighbor_cluster_id_cmd);
+	install_element(BGP_FLOWSPECV4_NODE,
+			&neighbor_cluster_id_cmd);
+	install_element(BGP_FLOWSPECV6_NODE,
+			&neighbor_cluster_id_cmd);
+	install_element(BGP_EVPN_NODE, &neighbor_cluster_id_cmd);
 
 	/* "neighbor route-reflector" commands.*/
 	install_element(BGP_NODE, &neighbor_route_reflector_client_hidden_cmd);
