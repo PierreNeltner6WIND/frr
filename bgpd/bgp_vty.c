@@ -5452,7 +5452,7 @@ DEFPY_YANG (neighbor_cluster_id,
 		nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, id_str);
 	}
 	
-	return nb_cli_apply_changes(vty, NULL) 
+	return nb_cli_apply_changes(vty, NULL) ;
 
 }
 
