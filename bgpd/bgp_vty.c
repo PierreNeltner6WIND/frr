@@ -5438,11 +5438,7 @@ DEFPY_YANG (neighbor_cluster_id,
 
 	afi_t afi=bgp_node_afi(vty);
  	safi_t safi=bgp_node_safi(vty);
-	char afi_safi_str[sizeof(safi2str(safi))+sizeof(afi2str(afi))+1]
-	snprintf(
-		afi_safi_str, sizeof(afi_safi),
-		"%s-%s",
-		afi2str(afi),safi2str(safi));
+	char* afi_safi_str=get_afi_safi_str(afi,safi,false);
 	
 	snprintf(
 		xpath_value, sizeof(xpath_value),
