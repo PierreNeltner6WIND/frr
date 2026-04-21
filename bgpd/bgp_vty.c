@@ -5382,7 +5382,45 @@ DEFUN (neighbor_remote_as,
 				  argv[idx_remote_as]->arg);
 }
 
-DEFPY (neighbor_cluster_id,
+// DEFPY (neighbor_cluster_id,
+// 	neighbor_cluster_id_cmd,
+// 	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id <A.B.C.D|(1-4294967295)>$id",
+// 	NO_STR
+// 	NEIGHBOR_STR
+// 	NEIGHBOR_ADDR_STR2
+// 	"Configure a specific cluster-id for the neighbor\n"
+// 	"Route-Reflector Cluster-id in IP address format\n"
+// 	"Route-Reflector Cluster-id as 32 bit quantity\n")
+// {
+// 	struct in_addr cluster;
+// 	int ret;
+// 	struct peer *peer;
+// 	afi_t afi=bgp_node_afi(vty);
+// 	safi_t safi=bgp_node_safi(vty);
+// 	peer = peer_and_group_lookup_vty(vty, neighbor);
+// 	ret = inet_aton(id, &cluster);
+// 	if(!peer){
+// 		return CMD_WARNING_CONFIG_FAILED;
+// 	}
+// 	if(!ret){
+// 		vty_out(vty, "%% Malformed bgp cluster identifier\n");
+// 		return CMD_WARNING_CONFIG_FAILED;
+// 	}
+// 	if(!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)){
+// 		vty_out(vty, "%% configure as route-reflector client first\n");
+// 		return CMD_WARNING_CONFIG_FAILED;
+// 	}
+	
+// 	/*bgp_node_afi(vty),
+// 				    bgp_node_safi(vty),
+// 				    PEER_FLAG_REFLECTOR_CLIENT
+// 	return peer_remote_as_vty(vty, argv[idx_peer]->arg,
+// 				  argv[idx_remote_as]->arg);*/
+// 	vty_out(vty, "%% cA IMPLEMENTER\n");
+// 	return CMD_SUCCESS;
+// }
+
+DEFPY_YANG (neighbor_cluster_id,
 	neighbor_cluster_id_cmd,
 	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id <A.B.C.D|(1-4294967295)>$id",
 	NO_STR
@@ -5392,32 +5430,30 @@ DEFPY (neighbor_cluster_id,
 	"Route-Reflector Cluster-id in IP address format\n"
 	"Route-Reflector Cluster-id as 32 bit quantity\n")
 {
-	struct in_addr cluster;
-	int ret;
-	struct peer *peer;
+	const char *xpath =
+		"./"
+		"./match-condition[condition='frr-bgp:neighbor[remote-address=%s]/afi_safis/afi_safi[remote-address=frr-rt:%s]/route-reflector/route-reflector-cluster-id']";
+	char xpath_value[XPATH_MAXLEN];
+	char xpath_match[XPATH_MAXLEN];
+
 	afi_t afi=bgp_node_afi(vty);
-	safi_t safi=bgp_node_safi(vty);
-	peer = peer_and_group_lookup_vty(vty, neighbor);
-	ret = inet_aton(id, &cluster);
-	if(!peer){
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-	if(!ret){
-		vty_out(vty, "%% Malformed bgp cluster identifier\n");
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-	if(!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)){
-		vty_out(vty, "%% configure as route-reflector client first\n");
-		return CMD_WARNING_CONFIG_FAILED;
-	}
+ 	safi_t safi=bgp_node_safi(vty);
+	char afi_safi_str[sizeof(safi2str(safi))+sizeof(afi2str(afi))+1]
+	snprintf(
+		afi_safi_str, sizeof(afi_safi),
+		"%s-%s",
+		afi2str(afi),safi2str(safi));
 	
-	/*bgp_node_afi(vty),
-				    bgp_node_safi(vty),
-				    PEER_FLAG_REFLECTOR_CLIENT
-	return peer_remote_as_vty(vty, argv[idx_peer]->arg,
-				  argv[idx_remote_as]->arg);*/
-	vty_out(vty, "%% cA IMPLEMENTER\n");
-	return CMD_SUCCESS;
+	snprintf(
+		xpath_value, sizeof(xpath_value),
+		xpath,
+		neighbor_str,afi_safi_str);
+		
+	if (no){
+		nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, id_str);
+	}
+	return nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, id_str);
+
 }
 
 DEFPY (bgp_allow_martian,

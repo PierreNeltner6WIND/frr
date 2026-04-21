@@ -567,6 +567,13 @@ submodule frr-bgp-common-structure {
         description
           "Configure a neighbor as route reflector client.";
       }
+      leaf route-reflector-cluster-id {
+        when "../route-reflector-client = true";
+        type bt:rr-cluster-id-type;
+        description
+          "Route Reflector cluster ID to use when local router is
+           configured as a route reflector for a specific iBGP peer and AFI-SAFI.";
+      }
     }
   }
 
