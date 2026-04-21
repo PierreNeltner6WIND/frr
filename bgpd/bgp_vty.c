@@ -30,6 +30,8 @@
 #include "frrstr.h"
 #include "asn.h"
 #include "frregex_real.h"
+#include "lib/northbound_cli.h"
+
 
 #include "bgpd/bgpd.h"
 #include "bgpd/bgp_attr_evpn.h"
@@ -5438,7 +5440,7 @@ DEFPY_YANG (neighbor_cluster_id,
 
 	afi_t afi=bgp_node_afi(vty);
  	safi_t safi=bgp_node_safi(vty);
-	char* afi_safi_str=get_afi_safi_str(afi,safi,false);
+	const char *afi_safi_str=get_afi_safi_str(afi,safi,false);
 	
 	snprintf(
 		xpath_value, sizeof(xpath_value),
