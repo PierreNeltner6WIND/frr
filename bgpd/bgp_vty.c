@@ -5436,7 +5436,6 @@ DEFPY_YANG (neighbor_cluster_id,
 		"./"
 		"./match-condition[condition='frr-bgp:neighbor[remote-address=%s]/afi_safis/afi_safi[remote-address=frr-rt:%s]/route-reflector/route-reflector-cluster-id']";
 	char xpath_value[XPATH_MAXLEN];
-	struct in_addr test = neighbor;
 	afi_t afi=bgp_node_afi(vty);
  	safi_t safi=bgp_node_safi(vty);
 	const char *afi_safi_str=get_afi_safi_str(afi,safi,false);
@@ -5447,9 +5446,13 @@ DEFPY_YANG (neighbor_cluster_id,
 		neighbor_str,afi_safi_str);
 		
 	if (no){
-		return nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, id_str);
+		nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, id_str);
 	}
-	return nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, id_str);
+	else{
+		nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, id_str);
+	}
+	
+	return nb_cli_apply_changes(vty, NULL) 
 
 }
 
