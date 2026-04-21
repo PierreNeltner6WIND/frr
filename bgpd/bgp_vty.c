@@ -5424,7 +5424,7 @@ DEFUN (neighbor_remote_as,
 
 DEFPY_YANG (neighbor_cluster_id,
 	neighbor_cluster_id_cmd,
-	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id <A.B.C.D|(1-4294967295)>$id",
+	"[no] neighbor <A.B.C.D$neighbor|X:X::X:X$neighborv6|WORD$neighborname> cluster-id <A.B.C.D$id|(1-4294967295)$id_num>",
 	NO_STR
 	NEIGHBOR_STR
 	NEIGHBOR_ADDR_STR2
@@ -5436,8 +5436,7 @@ DEFPY_YANG (neighbor_cluster_id,
 		"./"
 		"./match-condition[condition='frr-bgp:neighbor[remote-address=%s]/afi_safis/afi_safi[remote-address=frr-rt:%s]/route-reflector/route-reflector-cluster-id']";
 	char xpath_value[XPATH_MAXLEN];
-	char xpath_match[XPATH_MAXLEN];
-
+	in_addr test = neighbor
 	afi_t afi=bgp_node_afi(vty);
  	safi_t safi=bgp_node_safi(vty);
 	const char *afi_safi_str=get_afi_safi_str(afi,safi,false);
@@ -5448,7 +5447,7 @@ DEFPY_YANG (neighbor_cluster_id,
 		neighbor_str,afi_safi_str);
 		
 	if (no){
-		nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, id_str);
+		return nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, id_str);
 	}
 	return nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, id_str);
 
