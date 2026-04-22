@@ -1923,8 +1923,8 @@ struct peer {
 
 	enum bgp_addpath_strat addpath_type[AFI_MAX][SAFI_MAX];
 
-	/*specific cluster*/
-	struct in_addr specific_cluster;
+	/*specific cluster pour  chaque AFI-SAFI*/
+	struct in_addr specific_cluster[AFI_MAX][SAFI_MAX];
 
 	/* MD5 password */
 	char *password;

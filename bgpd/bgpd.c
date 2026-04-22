@@ -636,6 +636,22 @@ uint16_t bgp_suppress_fib_get_adv_delay(struct bgp *bgp)
 }
 
 /* BGP's cluster-id control. */
+void bgp_specific_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer, struct afi_t* afi, struct safi_t* safi)
+{
+	/* do nothing when the value is already configured as desired*/
+	if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_SPECIFIED_CLUSTER_ID)
+	    && IPV4_ADDR_SAME(peer->specific_cluster[*afi][*safi], cluster_id))
+		return;
+
+	IPV4_ADDR_COPY(peer->specific_cluster[*afi][*safi], cluster_id);
+	SET_FLAG(peer->specific_cluster[*afi][*safi],PEER_FLAG_SPECIFIED_CLUSTER_ID)
+
+	/* Clear the one changed IBGP peer. */
+	peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+	peer_notify_config_change(peer->connection);
+}
+
 void bgp_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id)
 {
 	struct peer *peer;
