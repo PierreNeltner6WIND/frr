@@ -191,6 +191,8 @@ struct bgp_master {
 	/* global update-delay timer values */
 	uint16_t v_update_delay;
 	uint16_t v_establish_wait;
+	/* global advertisement-delay timer value */
+	uint16_t v_advertisement_delay;
 
 	uint32_t flags;
 #define BM_FLAG_GRACEFUL_SHUTDOWN        (1 << 0)
@@ -285,6 +287,7 @@ struct srv6_policy {
 	char *rmap_name;
 	uint32_t flags;
 #define SRV6_POLICY_FLAG_BEHAVIOR_DT46 (1 << 0)
+#define SRV6_POLICY_FLAG_SID_AUTO      (1 << 1)
 };
 
 struct vpn_policy {
@@ -683,6 +686,14 @@ struct bgp {
 	uint32_t restarted_peers;
 	uint32_t received_eors;
 #define BGP_UPDATE_DELAY_DEFAULT 0
+#define BGP_ADVERTISEMENT_DELAY_DEFAULT 0
+
+	/* Advertisement delay (hold route advertisements after first peer establishes) */
+	struct event *t_advertisement_delay;
+	bool advertisement_delay_over;
+	bool advertisement_delay_started;
+	uint16_t v_advertisement_delay;
+	char advertisement_delay_resume_time[64];
 
 	/* Reference bandwidth for BGP link-bandwidth. Used when
 	 * the LB value has to be computed based on some other
@@ -798,8 +809,6 @@ struct bgp {
 #define BGP_CONFIG_VRF_TO_VRF_EXPORT (1 << 10)
 /* vpnvx retain flag */
 #define BGP_VPNVX_RETAIN_ROUTE_TARGET_ALL (1 << 11)
-/* SRv6 unicast flag */
-#define BGP_CONFIG_SRV6_UNICAST_SID_AUTO (1 << 12)
 
 	/* BGP per AF peer count */
 	uint32_t af_peer_count[AFI_MAX][SAFI_MAX];
@@ -1841,6 +1850,9 @@ struct peer {
 #define PEER_FLAG_RPKI_STRICT	     (1ULL << 46) /* RPKI strict mode */
 #define PEER_FLAG_CAPABILITY_SOFT_VERSION_NEW (1ULL << 47)
 #define PEER_FLAG_REMOTE_AS		      (1ULL << 48) /* remote-as override */
+/* BGP-LS per-peer link identifiers configured */
+#define PEER_FLAG_LS_LOCAL_LINK_ID  (1ULL << 49)
+#define PEER_FLAG_LS_REMOTE_LINK_ID (1ULL << 50)
 
 	/*
 	 *GR-Disabled mode means unset PEER_FLAG_GRACEFUL_RESTART
@@ -2255,6 +2267,10 @@ struct peer {
 
 	bool shut_during_cfg;
 
+	/* BGP-LS per-peer link identifiers (draft-ietf-idr-bgp-ls-bgp-only-fabric) */
+	uint32_t ls_local_link_id;
+	uint32_t ls_remote_link_id;
+
 #define BGP_ATTR_MAX 255
 	/* Path attributes discard */
 	bool discard_attrs[BGP_ATTR_MAX + 1];
@@ -2522,6 +2538,7 @@ struct cluster {
 #define BGP_DYNAMIC_NEIGHBORS_LIMIT_MAX      65535
 
 /* BGP AIGP */
+#define BGP_AIGP_TLV_MIN_LEN	 3 /* minimum generic TLV header (type + length field) */
 #define BGP_AIGP_TLV_RESERVED 0 /* AIGP Reserved */
 #define BGP_AIGP_TLV_METRIC 1   /* AIGP Metric */
 #define BGP_AIGP_TLV_METRIC_LEN 11
@@ -2765,6 +2782,9 @@ extern void bgp_listen_limit_unset(struct bgp *bgp);
 
 extern bool bgp_update_delay_active(struct bgp *bgp);
 extern bool bgp_update_delay_configured(struct bgp *bgp);
+extern bool bgp_advertisement_delay_active(struct bgp *bgp);
+extern bool bgp_advertisement_delay_applicable(struct bgp *bgp);
+extern bool bgp_advertisement_delay_configured(struct bgp *bgp);
 extern bool bgp_afi_safi_peer_exists(struct bgp *bgp, afi_t afi, safi_t safi);
 extern void peer_as_change(struct peer *peer, as_t as,
 			   enum peer_asn_type as_type, const char *as_str);

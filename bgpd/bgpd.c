@@ -339,6 +339,9 @@ static int bgp_router_id_set(struct bgp *bgp, const struct in_addr *id,
 
 	vpn_handle_router_id_update(bgp, true, is_config);
 
+	if (bgp && bgp->ls_info && bgp->ls_info->enable_distribution)
+		bgp_ls_withdraw_all(bgp);
+
 	hook_call(bgp_routerid_update, bgp, true);
 
 	IPV4_ADDR_COPY(&bgp->router_id, id);
@@ -357,6 +360,9 @@ static int bgp_router_id_set(struct bgp *bgp, const struct in_addr *id,
 		bgp_evpn_handle_router_id_update(bgp, false);
 
 	vpn_handle_router_id_update(bgp, false, is_config);
+
+	if (bgp && bgp->ls_info && bgp->ls_info->enable_distribution)
+		bgp_ls_export_bgp_topology(bgp);
 
 	hook_call(bgp_routerid_update, bgp, false);
 	return 0;
@@ -1254,6 +1260,11 @@ static inline enum bgp_peer_sort peer_calc_sort(struct peer *peer)
 				else
 					return BGP_PEER_EBGP;
 			} else {
+				/* If the peer's AS is the same as the confederation ID,
+				 * then treat if as an iBGP peer.
+				 */
+				if (peer->as == bgp->confed_id)
+					return BGP_PEER_IBGP;
 				if (local_as == bgp->confed_id)
 					return BGP_PEER_EBGP;
 				else
@@ -3829,6 +3840,7 @@ peer_init:
 
 	bgp->v_update_delay = bm->v_update_delay;
 	bgp->v_establish_wait = bm->v_establish_wait;
+	bgp->v_advertisement_delay = bm->v_advertisement_delay;
 	bgp->default_local_pref = BGP_DEFAULT_LOCAL_PREF;
 	bgp->default_subgroup_pkt_queue_max =
 		BGP_DEFAULT_SUBGROUP_PKT_QUEUE_MAX;
@@ -3950,6 +3962,9 @@ peer_init:
 	pthread_mutex_init(&bgp->peer_errs_mtx, NULL);
 	bgp_peer_conn_errlist_init(&bgp->peer_conn_errlist);
 	bgp_clearing_info_init(&bgp->clearing_list);
+
+	if (bgp && bgp->ls_info && bgp->ls_info->enable_distribution)
+		bgp_ls_originate_bgp_node(bgp);
 
 	return bgp;
 }
@@ -4447,6 +4462,7 @@ int bgp_delete(struct bgp *bgp)
 	event_cancel(&bgp->t_maxmed_onstartup);
 	event_cancel(&bgp->t_update_delay);
 	event_cancel(&bgp->t_establish_wait);
+	event_cancel(&bgp->t_advertisement_delay);
 
 	/* If the clearing event is scheduled, there's an extra ref to
 	 * this 'bgp' - ensure we unlock.
@@ -4605,6 +4621,14 @@ int bgp_delete(struct bgp *bgp)
 	}
 
 	bgp_cleanup_routes(bgp);
+
+	if (bm->terminating)
+		/*
+		 * Release EVPN VNI bgp_lock references so the
+		 * subsequent bgp_unlock() can drive refcount to
+		 * zero and trigger bgp_free().
+		 */
+		bgp_evpn_cleanup(bgp);
 
 	for (afi = 0; afi < AFI_MAX; ++afi) {
 		if (!bgp->vpn_policy[afi].import_redirect_rtlist)
@@ -4896,8 +4920,11 @@ struct peer *peer_create_bind_dynamic_neighbor(struct bgp *bgp,
 	 * want.
 	 */
 	FOREACH_AFI_SAFI (afi, safi) {
-		if (!group->conf->afc[afi][safi])
+		if (!group->conf->afc[afi][safi]) {
+			if (peer->afc[afi][safi])
+				peer_deactivate(peer, afi, safi);
 			continue;
+		}
 		peer->afc[afi][safi] = 1;
 
 		if (!peer_af_find(peer, afi, safi))

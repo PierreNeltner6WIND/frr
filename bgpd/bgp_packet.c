@@ -1893,7 +1893,7 @@ static int bgp_open_receive(struct peer_connection *connection,
 
 	/* Just in case we have a silly peer who sends AS4 capability set to 0
 	 */
-	if (CHECK_FLAG(peer->cap, PEER_CAP_AS4_RCV) && !as4) {
+	if (CHECK_FLAG(peer->cap, PEER_CAP_AS4_RCV) && as4 == BGP_AS_ZERO) {
 		flog_err(EC_BGP_PKT_OPEN,
 			 "%s bad OPEN, got AS4 capability, but AS4 set to 0",
 			 peer->host);
@@ -1929,7 +1929,7 @@ static int bgp_open_receive(struct peer_connection *connection,
 			return BGP_Stop;
 		}
 
-		if (!as4 && BGP_DEBUG(as4, AS4))
+		if (as4 == BGP_AS_ZERO && BGP_DEBUG(as4, AS4))
 			zlog_debug(
 				"%s [AS4] OPEN remote_as is AS_TRANS, but no AS4. Odd, but proceeding.",
 				peer->host);
@@ -1937,7 +1937,7 @@ static int bgp_open_receive(struct peer_connection *connection,
 			zlog_debug(
 				"%s [AS4] OPEN remote_as is AS_TRANS, but AS4 (%u) fits in 2-bytes, very odd peer.",
 				peer->host, as4);
-		if (as4)
+		if (as4 != BGP_AS_ZERO)
 			remote_as = as4;
 	} else {
 		/* We may have a partner with AS4 who has an asno < BGP_AS_MAX
@@ -2015,7 +2015,9 @@ static int bgp_open_receive(struct peer_connection *connection,
 		}
 		(void)peer_sort(peer);
 	} else if (peer->as_type == AS_INTERNAL) {
-		if (remote_as != peer->bgp->as) {
+		as_t local_as = peer->change_local_as ? peer->change_local_as : peer->bgp->as;
+
+		if (remote_as != local_as) {
 			if (bgp_debug_neighbor_events(peer))
 				zlog_debug(
 					"%s bad OPEN, remote AS is %u, internal specified",
@@ -2026,7 +2028,7 @@ static int bgp_open_receive(struct peer_connection *connection,
 						  notify_data_remote_as, 2);
 			return BGP_Stop;
 		}
-		peer->as = peer->local_as;
+		peer->as = peer->change_local_as ? peer->change_local_as : peer->local_as;
 	} else if (peer->as_type == AS_EXTERNAL) {
 		if (remote_as == peer->bgp->as) {
 			if (bgp_debug_neighbor_events(peer))
@@ -3448,11 +3450,18 @@ static void bgp_dynamic_capability_orf(uint8_t *pnt, int action,
 }
 
 static void bgp_dynamic_capability_role(uint8_t *pnt, int action,
+					struct capability_header *hdr,
 					struct peer *peer)
 {
 	uint8_t role;
 
 	if (action == CAPABILITY_ACTION_SET) {
+		if (hdr->length != CAPABILITY_CODE_ROLE_LEN) {
+			flog_err(EC_BGP_CAPABILITY_INVALID_LENGTH,
+				 "%pBP: ROLE Capability length error: got %u, expected %zu",
+				 peer, hdr->length, sizeof(role));
+			return;
+		}
 		SET_FLAG(peer->cap, PEER_CAP_ROLE_RCV);
 		memcpy(&role, pnt + 3, sizeof(role));
 
@@ -3740,33 +3749,22 @@ static void bgp_dynamic_capability_software_version(uint8_t *pnt, int action,
 	uint8_t *data = pnt + 3;
 	uint8_t *end = data + hdr->length;
 	uint8_t len = hdr->length;
-	uint8_t cap_value_len_field = *data + 1;
+	uint8_t cap_value_len_field;
 	char soft_version[BGP_MAX_SOFT_VERSION + 1] = {};
 
 	if (action == CAPABILITY_ACTION_SET) {
+		if (data >= end)
+			return;
+
 		/* For backward compatibility.
 		 * Older draft versions defined the length field inside
 		 * the capability's value. Newer versions use just the
 		 * capability's length which is hdr->length.
 		 */
+		cap_value_len_field = *data + 1;
 		if (cap_value_len_field == len) {
 			len = *data;
-
-			if (data + len + 1 > end) {
-				flog_err(EC_BGP_CAPABILITY_INVALID_LENGTH,
-					 "%pBP: Received invalid Software Version capability length %d",
-					 peer, len);
-				return;
-			}
-
 			data++;
-		} else {
-			if (data + len > end) {
-				flog_err(EC_BGP_CAPABILITY_INVALID_LENGTH,
-					 "%pBP: Received invalid Software Version capability length %d",
-					 peer, len);
-				return;
-			}
 		}
 
 		if (len > BGP_MAX_SOFT_VERSION)
@@ -3832,7 +3830,7 @@ static int bgp_capability_msg_parse(struct peer *peer, uint8_t *pnt,
 				 "%pBP: Capability Action Value error %d", peer, action);
 			bgp_notify_send(peer->connection, BGP_NOTIFY_CEASE,
 					BGP_NOTIFY_SUBCODE_UNSPECIFIC);
-			goto done;
+			return BGP_Stop;
 		}
 
 		if (bgp_debug_neighbor_events(peer))
@@ -3982,7 +3980,7 @@ static int bgp_capability_msg_parse(struct peer *peer, uint8_t *pnt,
 			bgp_dynamic_capability_enhe(pnt, action, hdr, peer);
 			break;
 		case CAPABILITY_CODE_ROLE:
-			bgp_dynamic_capability_role(pnt, action, peer);
+			bgp_dynamic_capability_role(pnt, action, hdr, peer);
 			break;
 		default:
 			flog_warn(EC_BGP_UNRECOGNIZED_CAPABILITY,
