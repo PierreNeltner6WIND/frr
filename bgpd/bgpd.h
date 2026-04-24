@@ -620,7 +620,7 @@ struct bgp {
 	/* BGP route reflector default cluster ID.  */
 	struct in_addr cluster_id;
 
-	struct list *specific_clusters;
+	struct list *per_neighbor_clusters;
 
 	/* BGP confederation information.  */
 	as_t confed_id;
@@ -2311,9 +2311,8 @@ struct cluster {
 	uint8_t flags;
 #define BGP_FLAG_NO_CLIENT_TO_CLIENT_INTRA_CLUSTER (1 << 0)
 
-	/*number of peers inside the cluster to be able to suppress the 
-	cluster when it becomes 0*/
-	uint64_t number_of_peers;
+	/*list of peers for that cluster*/
+	struct list* peers;
 };
 
 /* BGP versions.  */
@@ -2708,6 +2707,9 @@ extern void bgp_router_id_static_set(struct bgp *bgp, struct in_addr router_id);
 
 extern void bm_wait_for_fib_set(bool set);
 extern void bgp_suppress_fib_pending_set(struct bgp *bgp, bool set);
+extern struct cluster *cluster_lookup(struct bgp *bgp, const struct in_addr *cluster_id);
+extern void bgp_per_neighbor_cluster_id_add(struct bgp *bgp, struct in_addr *cluster_id);
+extern void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster_id);
 extern void bgp_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id);
 extern void bgp_cluster_id_unset(struct bgp *bgp);
 

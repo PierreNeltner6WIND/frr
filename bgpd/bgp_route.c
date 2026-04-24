@@ -2020,8 +2020,10 @@ static bool bgp_community_filter(struct peer *peer, struct attr *attr)
 /* Route reflection loop check.  */
 static bool bgp_cluster_filter(struct peer *peer, struct attr *attr)
 {
+	struct listnode *node, *nnode;
 	struct in_addr cluster_id;
 	struct cluster_list *cluster = bgp_attr_get_cluster(attr);
+	struct cluster *per_neighbor_cluster;
 
 	if (cluster) {
 		if (CHECK_FLAG(peer->bgp->config, BGP_CONFIG_CLUSTER_ID))
@@ -2031,6 +2033,12 @@ static bool bgp_cluster_filter(struct peer *peer, struct attr *attr)
 
 		if (cluster_loop_check(cluster, cluster_id))
 			return true;
+
+		for (ALL_LIST_ELEMENTS(peer->bgp->per_neighbor_clusters, node, nnode, per_neighbor_cluster)) {
+			if (cluster_loop_check(cluster, per_neighbor_cluster->cluster_id))
+				return true;
+		}
+
 	}
 	return false;
 }

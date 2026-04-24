@@ -611,20 +611,96 @@ void bgp_zebra_suppress_fib_pending_config_retry(void)
 }
 
 /* BGP's cluster-id control. */
-void bgp_specific_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer, struct afi_t* afi, struct safi_t* safi)
+// void bgp_specific_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer, struct afi_t* afi, struct safi_t* safi)
+// {
+// 	/* do nothing when the value is already configured as desired*/
+// 	if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_SPECIFIED_CLUSTER_ID)
+// 	    && IPV4_ADDR_SAME(peer->specific_cluster[*afi][*safi], cluster_id))
+// 		return;
+
+// 	IPV4_ADDR_COPY(peer->specific_cluster[*afi][*safi], cluster_id);
+// 	SET_FLAG(peer->specific_cluster[*afi][*safi],PEER_FLAG_SPECIFIED_CLUSTER_ID)
+
+// 	/* Clear the one changed IBGP peer. */
+// 	peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+// 	peer_notify_config_change(peer->connection);
+// }
+
+static struct cluster *cluster_new(void)
 {
-	/* do nothing when the value is already configured as desired*/
-	if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_SPECIFIED_CLUSTER_ID)
-	    && IPV4_ADDR_SAME(peer->specific_cluster[*afi][*safi], cluster_id))
+	struct cluster *cluster;
+	cluster= XCALLOC(MTYPE_PER_NEIGHBOR_CLUSTER, sizeof(struct cluster));
+	cluster->peers = list_new();
+	return cluster;
+}
+
+static void cluster_free(struct cluster *cluster)
+{
+	list_delete(&cluster->peers);
+	XFREE(MTYPE_PER_NEIGHBOR_CLUSTER, cluster);
+}
+
+struct cluster *cluster_lookup(struct bgp *bgp, const struct in_addr *cluster_id)
+{
+	struct cluster *cluster;
+	struct listnode *node, *nnode;
+
+	for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
+		if (IPV4_ADDR_SAME(&cluster->cluster_id, cluster_id))
+			return cluster;
+	}
+	return NULL;
+}
+
+void bgp_per_neighbor_cluster_id_add(struct bgp *bgp, struct in_addr *cluster_id)
+{
+	struct cluster *cluster;
+	struct listnode *node, *nnode;
+	struct peer* peer;
+
+	if (cluster_lookup(bgp,cluster_id))
 		return;
 
-	IPV4_ADDR_COPY(peer->specific_cluster[*afi][*safi], cluster_id);
-	SET_FLAG(peer->specific_cluster[*afi][*safi],PEER_FLAG_SPECIFIED_CLUSTER_ID)
+	cluster = cluster_new();
+	IPV4_ADDR_COPY(&cluster->cluster_id, cluster_id);
+	listnode_add_sort(bgp->per_neighbor_clusters, cluster);
 
-	/* Clear the one changed IBGP peer. */
-	peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
 
-	peer_notify_config_change(peer->connection);
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+}
+
+void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster_id)
+{
+	struct cluster *cluster;
+	struct listnode * cn;
+	struct listnode *node, *nnode;
+	struct peer* peer;
+	cluster=cluster_lookup(bgp,cluster_id);
+	if (!cluster)
+		return;
+
+	cn = listnode_lookup(bgp->per_neighbor_clusters, cluster);
+	list_delete_node(bgp->per_neighbor_clusters,cn);
+	cluster_free(cluster);
+
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+
 }
 
 void bgp_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id)
@@ -3765,6 +3841,7 @@ static struct bgp *bgp_create(as_t *as, const char *name,
 	SET_FLAG(bgp->peer_self->cap, PEER_CAP_AS4_ADV);
 
 	bgp->peer = list_new();
+	bgp->per_neighbor_clusters = list_new();
 
 peer_init:
 	bgp->peer->cmp = (int (*)(void *, void *))peer_cmp;
@@ -4298,6 +4375,7 @@ int bgp_delete(struct bgp *bgp)
 	struct peer_connection *connection;
 	uint32_t b_ann_cnt = 0, b_l2_cnt = 0;
 	uint32_t a_ann_cnt = 0, a_l2_cnt = 0;
+	struct cluster *cluster;
 
 	assert(bgp);
 
@@ -4520,6 +4598,10 @@ int bgp_delete(struct bgp *bgp)
 
 	update_bgp_group_free(bgp);
 
+	/*Free per-neighbor clusters*/
+	for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, next, cluster))
+		cluster_free(cluster);
+	
 	/* Cancel peer connection errors event */
 	event_cancel(&bgp->t_conn_errors);
 
@@ -4648,6 +4730,7 @@ void bgp_free(struct bgp *bgp)
 
 	list_delete(&bgp->group);
 	list_delete(&bgp->peer);
+	list_delete(&bgp->per_neighbor_clusters);
 
 	if (bgp->connectionhash) {
 		hash_free(bgp->connectionhash);
