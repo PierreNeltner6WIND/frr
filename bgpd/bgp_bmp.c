@@ -3531,6 +3531,7 @@ static int bmp_bgp_attribute_updated(struct bgp *bgp, bool withdraw)
 	afi_t afi;
 	safi_t safi;
 
+
 	/* update peer_self->router_id */
 	if (withdraw == false)
 		bgp->peer_self->local_id = bgp->router_id;

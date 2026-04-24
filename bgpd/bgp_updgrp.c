@@ -134,6 +134,7 @@ static void conf_copy(struct peer *dst, struct peer *src, afi_t afi,
 	dst->v_routeadv = src->v_routeadv;
 	dst->flags = src->flags;
 	dst->af_flags[afi][safi] = src->af_flags[afi][safi];
+	dst->per_neighbor_cluster[afi][safi] = src->per_neighbor_cluster[afi][safi];
 	dst->pmax_out[afi][safi] = src->pmax_out[afi][safi];
 	dst->max_packet_size = src->max_packet_size;
 	XFREE(MTYPE_BGP_PEER_HOST, dst->host);
@@ -371,6 +372,9 @@ static unsigned int updgrp_hash_key_make(const void *p)
 				   CHECK_FLAG(peer->flags,
 					      PEER_FLAG_AS_LOOP_DETECTION),
 				   key);
+	if (CHECK_FLAG(flags, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+		key = jhash_1word(peer->per_neighbor_cluster[afi][safi].s_addr,
+				   key);
 	if (peer->group)
 		key = jhash_1word(jhash(peer->group->name,
 					strlen(peer->group->name), SEED1),
@@ -582,7 +586,6 @@ static bool updgrp_hash_cmp(const void *p1, const void *p2)
 	flags2 = pe2->af_flags[afi][safi];
 	fl1 = &pe1->filter[afi][safi];
 	fl2 = &pe2->filter[afi][safi];
-
 	/* put EBGP and IBGP peers in different update groups */
 	if (pe1->sort != pe2->sort)
 		return false;
@@ -600,8 +603,13 @@ static bool updgrp_hash_cmp(const void *p1, const void *p2)
 		return false;
 
 	/* flags like route reflector client */
-	if ((flags1 & PEER_UPDGRP_AF_FLAGS) != (flags2 & PEER_UPDGRP_AF_FLAGS))
-		return false;
+	if ((flags1 & PEER_UPDGRP_AF_FLAGS) != (flags2 & PEER_UPDGRP_AF_FLAGS)){
+		return false;}
+	
+	/*if per neighbor cluster is configured it should match*/
+	if (CHECK_FLAG(flags1, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID) && CHECK_FLAG(flags2, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)\
+	 	&& !IPV4_ADDR_SAME(&pe1->per_neighbor_cluster[afi][safi],&pe2->per_neighbor_cluster[afi][safi])){
+		return false;}
 
 	if (pe1->addpath_type[afi][safi] != pe2->addpath_type[afi][safi])
 		return false;
