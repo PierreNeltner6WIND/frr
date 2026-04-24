@@ -2138,6 +2138,10 @@ DEFUN (bgp_cluster_id,
 		vty_out(vty, "%% Malformed bgp cluster identifier\n");
 		return CMD_WARNING_CONFIG_FAILED;
 	}
+	if(!list_isempty(bgp->per_neighbor_clusters) && cluster_lookup(bgp,&cluster)){
+		vty_out(vty, "%% default cluster-id must be different from per-neighbor cluster-ids\n");
+		return CMD_WARNING_CONFIG_FAILED;
+	}
 
 	bgp_cluster_id_set(bgp, &cluster);
 	bgp_clear_star_soft_out(vty, bgp->name);
@@ -5484,50 +5488,43 @@ DEFUN (neighbor_remote_as,
 				  argv[idx_remote_as]->arg);
 }
 
-DEFPY (neighbor_cluster_id,
-	neighbor_cluster_id_cmd,
-	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id <A.B.C.D|(1-4294967295)>$id",
-	NO_STR
-	NEIGHBOR_STR
-	NEIGHBOR_ADDR_STR2
-	"Configure a specific cluster-id for the neighbor\n"
-	"Route-Reflector Cluster-id in IP address format\n"
-	"Route-Reflector Cluster-id as 32 bit quantity\n")
+DEFPY (bgp_per_neighbor_cluster_id,
+       bgp_per_neighbor_cluster_id_cmd,
+       "[no] bgp cluster-id per-neighbor <A.B.C.D|(1-4294967295)>$id",
+	   NO_STR
+       BGP_STR
+       "Configure Route-Reflector Cluster-id\n"
+	   "Configure Cluster-id that can be assigned on a per neighbor basis\n"
+       "Route-Reflector Cluster-id in IP address format\n"
+       "Route-Reflector Cluster-id as 32 bit quantity\n")
 {
-	struct in_addr cluster;
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
 	int ret;
-	struct peer *peer;
-	afi_t afi=bgp_node_afi(vty);
-	safi_t safi=bgp_node_safi(vty);
-	peer = peer_and_group_lookup_vty(vty, neighbor);
+	struct in_addr cluster;
+
 	ret = inet_aton(id, &cluster);
-	if(!peer){
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-	if(!ret){
+	if (!ret) {
 		vty_out(vty, "%% Malformed bgp cluster identifier\n");
 		return CMD_WARNING_CONFIG_FAILED;
 	}
-	if(!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)){
-		vty_out(vty, "%% configure as route-reflector client first\n");
-		return CMD_WARNING_CONFIG_FAILED;
-	}
-	
-	/*bgp_node_afi(vty),
-				    bgp_node_safi(vty),
-				    PEER_FLAG_REFLECTOR_CLIENT
-	return peer_remote_as_vty(vty, argv[idx_peer]->arg,
-				  argv[idx_remote_as]->arg);*/
-	vty_out(vty, "%% cA IMPLEMENTER\n");
-	bgp_specific_cluster_id_set(bgp, &cluster, &peer, &afi, &safi);
-	bgp_clear_star_soft_out(vty, bgp->name);
 
+	/*ensure that the default cluster is different from per-neighbor clusters*/
+	if ((CHECK_FLAG(bgp->config,BGP_CONFIG_CLUSTER_ID) \
+		&& IPV4_ADDR_SAME(&cluster,&bgp->cluster_id))\
+		|| (!CHECK_FLAG(bgp->config,BGP_CONFIG_CLUSTER_ID) \
+		&& IPV4_ADDR_SAME(&cluster,&bgp->router_id))){
+			vty_out(vty, "%% per-neighbor cluster identifier must be different from default cluster identifier\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		}
+
+	if (no) bgp_per_neighbor_cluster_id_delete(bgp,&cluster);
+	else bgp_per_neighbor_cluster_id_add(bgp, &cluster);
 	return CMD_SUCCESS;
 }
 
-// DEFPY_YANG (neighbor_cluster_id,
+// DEFPY (neighbor_cluster_id,
 // 	neighbor_cluster_id_cmd,
-// 	"[no] neighbor <A.B.C.D$neighbor|X:X::X:X$neighborv6|WORD$neighborname> cluster-id <A.B.C.D$id|(1-4294967295)$id_num>",
+// 	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id <A.B.C.D|(1-4294967295)>$id",
 // 	NO_STR
 // 	NEIGHBOR_STR
 // 	NEIGHBOR_ADDR_STR2
@@ -5535,29 +5532,35 @@ DEFPY (neighbor_cluster_id,
 // 	"Route-Reflector Cluster-id in IP address format\n"
 // 	"Route-Reflector Cluster-id as 32 bit quantity\n")
 // {
-// 	const char *xpath =
-// 		"./"
-// 		"./match-condition[condition='frr-bgp:neighbor[remote-address=%s]/afi_safis/afi_safi[remote-address=frr-rt:%s]/route-reflector/route-reflector-cluster-id']";
-// 	char xpath_value[XPATH_MAXLEN];
+// 	struct in_addr cluster;
+// 	int ret;
+// 	struct peer *peer;
 // 	afi_t afi=bgp_node_afi(vty);
-//  	safi_t safi=bgp_node_safi(vty);
-// 	const char *afi_safi_str=get_afi_safi_str(afi,safi,false);
-	
-// 	snprintf(
-// 		xpath_value, sizeof(xpath_value),
-// 		xpath,
-// 		neighbor_str,afi_safi_str);
-		
-// 	if (no){
-// 		nb_cli_enqueue_change(vty, xpath, NB_OP_DESTROY, id_str);
+// 	safi_t safi=bgp_node_safi(vty);
+// 	peer = peer_and_group_lookup_vty(vty, neighbor);
+// 	ret = inet_aton(id, &cluster);
+// 	if(!peer){
+// 		return CMD_WARNING_CONFIG_FAILED;
 // 	}
-// 	else{
-// 		nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, NULL);
-// 		nb_cli_enqueue_change(vty, xpath, NB_OP_MODIFY, id_str);
+// 	if(!ret){
+// 		vty_out(vty, "%% Malformed bgp cluster identifier\n");
+// 		return CMD_WARNING_CONFIG_FAILED;
+// 	}
+// 	if(!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)){
+// 		vty_out(vty, "%% configure as route-reflector client first\n");
+// 		return CMD_WARNING_CONFIG_FAILED;
 // 	}
 	
-// 	return nb_cli_apply_changes(vty, NULL) ;
+// 	/*bgp_node_afi(vty),
+// 				    bgp_node_safi(vty),
+// 				    PEER_FLAG_REFLECTOR_CLIENT
+// 	return peer_remote_as_vty(vty, argv[idx_peer]->arg,
+// 				  argv[idx_remote_as]->arg);*/
+// 	vty_out(vty, "%% cA IMPLEMENTER\n");
+// 	bgp_specific_cluster_id_set(bgp, &cluster, &peer, &afi, &safi);
+// 	bgp_clear_star_soft_out(vty, bgp->name);
 
+// 	return CMD_SUCCESS;
 // }
 
 DEFPY (bgp_allow_martian,
@@ -13269,6 +13272,11 @@ DEFUN (show_bgp_memory,
 	if ((count = mtype_stats_alloc(MTYPE_BGP_REGEXP)))
 		vty_out(vty, "%ld compiled regexes, using %s of memory\n", count,
 			mtype_memstr(memstrbuf, sizeof(memstrbuf), count * sizeof(struct frregex)));
+
+	if ((count = mtype_stats_alloc(MTYPE_PER_NEIGHBOR_CLUSTER)))
+		vty_out(vty, "%ld per-neighbor clusters, using %s of memory\n", count,
+			mtype_memstr(memstrbuf, sizeof(memstrbuf),
+				     count * sizeof(struct cluster)));
 	return CMD_SUCCESS;
 }
 
@@ -21362,6 +21370,7 @@ int bgp_config_write(struct vty *vty)
 {
 	struct bgp *bgp;
 	struct peer_group *group;
+	struct cluster *cluster;
 	struct peer *peer;
 	struct listnode *node, *nnode;
 	struct listnode *mnode, *mnnode;
@@ -21631,6 +21640,11 @@ int bgp_config_write(struct vty *vty)
 		if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
 			vty_out(vty, " bgp cluster-id %pI4\n",
 				&bgp->cluster_id);
+		
+		for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
+			vty_out(vty, " bgp cluster-id per-neighbor %pI4\n",
+				&cluster->cluster_id);
+		}
 
 		/* Disable ebgp connected nexthop check */
 		if (CHECK_FLAG(bgp->flags, BGP_FLAG_DISABLE_NH_CONNECTED_CHK))
@@ -22512,6 +22526,7 @@ void bgp_vty_init(void)
 	/* "bgp cluster-id" commands. */
 	install_element(BGP_NODE, &bgp_cluster_id_cmd);
 	install_element(BGP_NODE, &no_bgp_cluster_id_cmd);
+	install_element(BGP_NODE, &bgp_per_neighbor_cluster_id_cmd);
 
 	/* "bgp no-rib" commands. */
 	install_element(CONFIG_NODE, &bgp_norib_cmd);
@@ -23192,19 +23207,19 @@ void bgp_vty_init(void)
 	install_element(BGP_VPNV6_NODE, &neighbor_ecommunity_rpki_cmd);
 
 	/* "neighbor cluster-id" commands.*/
-	install_element(BGP_IPV4_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_IPV4M_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_IPV4L_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_IPV6_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_IPV6M_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_IPV6L_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_VPNV4_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_VPNV6_NODE, &neighbor_cluster_id_cmd);
-	install_element(BGP_FLOWSPECV4_NODE,
-			&neighbor_cluster_id_cmd);
-	install_element(BGP_FLOWSPECV6_NODE,
-			&neighbor_cluster_id_cmd);
-	install_element(BGP_EVPN_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_IPV4_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_IPV4M_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_IPV4L_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_IPV6_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_IPV6M_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_IPV6L_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_VPNV4_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_VPNV6_NODE, &neighbor_cluster_id_cmd);
+	// install_element(BGP_FLOWSPECV4_NODE,
+	// 		&neighbor_cluster_id_cmd);
+	// install_element(BGP_FLOWSPECV6_NODE,
+	// 		&neighbor_cluster_id_cmd);
+	// install_element(BGP_EVPN_NODE, &neighbor_cluster_id_cmd);
 
 	/* "neighbor route-reflector" commands.*/
 	install_element(BGP_NODE, &neighbor_route_reflector_client_hidden_cmd);
