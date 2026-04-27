@@ -485,7 +485,12 @@ class Topogen(object):
         logger.info("stopping topology: {}".format(self.modname))
 
         errors = ""
+        g=[]
         for gear in self.gears.values():
+            g.append(gear)
+        g.reverse()
+        for gear in g:
+            print(gear)
             errors += gear.stop()
         if len(errors) > 0:
             logger.error(
