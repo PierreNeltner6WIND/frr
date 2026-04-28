@@ -1624,6 +1624,7 @@ class Router(Node):
 
     def stopRouter(self, assertOnError=True):
         # Stop Running FRR Daemons
+        print("\n name :",self.name,"\n")
         running = self.listDaemons()
         if not running:
             return ""

@@ -174,8 +174,6 @@ def test_bgp_convergence():
         success, result = topotest.run_and_expect(test_func, True, count=60, wait=1)
         assert success, "{} BGP sessions did not converge".format(rname)
 
-def test_2():
-    test_bgp_convergence()
 
 
 # def check_r8_routes(

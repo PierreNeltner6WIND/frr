@@ -1106,7 +1106,7 @@ def stop_router(tgen, router):
     * `tgen`  : topogen object
     * `router`: Device under test
     """
-
+    print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
     router_list = tgen.routers()
 
     # Saving router config to /etc/frr, which will be loaded to router
