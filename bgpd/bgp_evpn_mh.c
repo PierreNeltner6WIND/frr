@@ -100,6 +100,7 @@ void bgp_evpn_vtep_ip_to_attr_nh(const struct ipaddr *vtep_ip, struct attr *attr
 		attr->nexthop = vtep_ip->ipaddr_v4;
 		attr->mp_nexthop_global_in = vtep_ip->ipaddr_v4;
 		attr->mp_nexthop_len = BGP_ATTR_NHLEN_IPV4;
+		bgp_attr_set(attr, BGP_ATTR_NEXT_HOP);
 	} else if (IS_IPADDR_V6(vtep_ip)) {
 		IPV6_ADDR_COPY(&attr->mp_nexthop_global, &vtep_ip->ipaddr_v6);
 		attr->mp_nexthop_len = BGP_ATTR_NHLEN_IPV6_GLOBAL;
@@ -415,6 +416,31 @@ static void bgp_evpn_es_route_del_all(struct bgp *bgp, struct bgp_evpn_es *es)
 	     dest = bgp_route_next(dest)) {
 		for (pi = bgp_dest_get_bgp_path_info(dest);
 		     (pi != NULL) && (nextpi = pi->next, 1); pi = nextpi) {
+			bgp_path_info_mark_for_delete(dest, pi);
+			dest = bgp_path_info_reap(dest, pi);
+
+			assert(dest);
+		}
+	}
+}
+
+/* Purge all path-info entries from the ES table during daemon shutdown.
+ * The owning bgp instance may already have been deleted, so clear the
+ * table->bgp backpointer to avoid node teardown dereferencing freed state.
+ */
+static void bgp_evpn_es_route_table_purge(struct bgp_evpn_es *es)
+{
+	struct bgp_dest *dest;
+	struct bgp_path_info *pi, *nextpi;
+
+	if (!es->route_table)
+		return;
+
+	es->route_table->bgp = NULL;
+
+	for (dest = bgp_table_top(es->route_table); dest; dest = bgp_route_next(dest)) {
+		for (pi = bgp_dest_get_bgp_path_info(dest); (pi != NULL) && (nextpi = pi->next, 1);
+		     pi = nextpi) {
 			bgp_path_info_mark_for_delete(dest, pi);
 			dest = bgp_path_info_reap(dest, pi);
 
@@ -845,9 +871,17 @@ int bgp_evpn_type4_route_process(struct peer *peer, afi_t afi, safi_t safi,
 	memcpy(&esi, pfx, ESI_BYTES);
 	pfx += ESI_BYTES;
 
-
 	/* Get the IP. */
 	ipaddr_len = *pfx++;
+
+	/* Validate */
+	if (psize != 19 + (ipaddr_len / 8)) {
+		flog_err(EC_BGP_EVPN_ROUTE_INVALID,
+			 "%u:%s - Rx EVPN Type-4 NLRI with invalid IP address length %d",
+			 peer->bgp->vrf_id, peer->host, ipaddr_len);
+		return -1;
+	}
+
 	if (ipaddr_len == IPV4_MAX_BITLEN) {
 		SET_IPADDR_V4(&vtep_ip);
 		memcpy(&vtep_ip.ipaddr_v4, pfx, IPV4_MAX_BYTELEN);
@@ -5185,6 +5219,17 @@ void bgp_evpn_mh_init(void)
 	memset(&zero_esi_buf, 0, sizeof(esi_t));
 }
 
+void bgp_evpn_es_cleanup_routes(struct bgp *bgp)
+{
+	struct bgp_evpn_es *es;
+
+	if (!bgp_mh_info)
+		return;
+
+	RB_FOREACH (es, bgp_es_rb_head, &bgp_mh_info->es_rb_tree)
+		bgp_evpn_es_route_del_all(bgp, es);
+}
+
 void bgp_evpn_mh_finish(void)
 {
 	struct bgp_evpn_es *es;
@@ -5199,6 +5244,11 @@ void bgp_evpn_mh_finish(void)
 	 * cleanup here to ensure no memory leaks.
 	 */
 	RB_FOREACH_SAFE (es, bgp_es_rb_head, &bgp_mh_info->es_rb_tree, es_next) {
+		/* Reap any remaining ES-table paths so table pi_hash is empty
+		 * before bgp_table_unlock() in bgp_evpn_es_free().
+		 */
+		bgp_evpn_es_route_table_purge(es);
+
 		/* Force cleanup of any remaining structures that couldn't be
 		 * freed due to REMOTE flags or other guard conditions
 		 */

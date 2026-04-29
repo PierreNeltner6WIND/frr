@@ -236,6 +236,7 @@ void pim_if_delete(struct interface *ifp)
 		XFREE(MTYPE_TMP, pim_ifp->bfd_config.profile);
 
 	XFREE(MTYPE_PIM_PLIST_NAME, pim_ifp->nbr_plist);
+	XFREE(MTYPE_PIM_PLIST_NAME, pim_ifp->allow_rp_plist);
 	XFREE(MTYPE_PIM_INTERFACE, pim_ifp);
 
 	ifp->info = NULL;
@@ -578,15 +579,9 @@ void pim_if_addr_add(struct connected *ifc)
 							       ij->group_addr, ij->source_addr,
 							       pim_ifp);
 					if (join_fd < 0) {
-						char group_str[INET_ADDRSTRLEN];
-						char source_str[INET_ADDRSTRLEN];
-						pim_inet4_dump("<grp?>", ij->group_addr, group_str,
-							       sizeof(group_str));
-						pim_inet4_dump("<src?>", ij->source_addr,
-							       source_str, sizeof(source_str));
-						zlog_warn("%s: gm_join_sock() failure for IGMP group %s source %s on interface %s",
-							  __func__, group_str, source_str,
-							  ifp->name);
+						zlog_warn("%s: gm_join_sock() failure for IGMP group %pI4s source %pI4s on interface %s",
+							  __func__, &ij->group_addr,
+							  &ij->source_addr, ifp->name);
 						/* warning only */
 					} else
 						ij->sock_fd = join_fd;
@@ -1408,10 +1403,9 @@ ferr_r pim_if_gm_join_add(struct interface *ifp, pim_addr group_addr,
 	}
 
 	if (PIM_DEBUG_GM_EVENTS) {
-		zlog_debug(
-			"%s: issued static " GM
-			" join for channel (S,G)=(%pPA,%pPA) on interface %s",
-			__func__, &source_addr, &group_addr, ifp->name);
+		zlog_debug("%s: issued join-group " GM
+			   " join for channel (S,G)=(%pPA,%pPA) on interface %s(%s)",
+			   __func__, &source_addr, &group_addr, ifp->name, ifp->vrf->name);
 	}
 
 	return ferr_ok();
@@ -1633,11 +1627,8 @@ void pim_if_gm_proxy_finis(struct pim_instance *pim, struct interface *ifp)
 	struct listnode *next_join_node;
 	struct gm_join *join;
 
-	if (!pim_ifp) {
-		zlog_warn("%s: multicast not enabled on interface %s", __func__,
-			  ifp->name);
+	if (!pim_ifp)
 		return;
-	}
 
 	for (ALL_LIST_ELEMENTS(pim_ifp->gm_join_list, join_node, next_join_node,
 			       join)) {

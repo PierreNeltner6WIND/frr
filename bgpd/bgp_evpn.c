@@ -2318,6 +2318,10 @@ static int update_evpn_route(struct bgp *bgp, struct bgpevpn *vpn,
 	if (p->prefix.route_type == BGP_EVPN_IMET_ROUTE) {
 		SET_FLAG(attr.flag, ATTR_FLAG_BIT(BGP_ATTR_PMSI_TUNNEL));
 		bgp_attr_set_pmsi_tnl_type(&attr, PMSI_TNLTYPE_INGR_REPL);
+		if (attr.mp_nexthop_len == BGP_ATTR_NHLEN_IPV4)
+			ipv4_to_ipv4_mapped_ipv6(&attr.tunn_id, attr.mp_nexthop_global_in);
+		else
+			IPV6_ADDR_COPY(&attr.tunn_id, &attr.mp_nexthop_global);
 	}
 
 	/* router mac is only needed for type-2 routes here. */
@@ -5023,6 +5027,14 @@ static int process_type2_route(struct peer *peer, afi_t afi, safi_t safi,
 		goto fail;
 	}
 
+	/* Validate ipaddr_len against the NLRI length */
+	if ((psize != 33 + (ipaddr_len / 8)) && (psize != 36 + (ipaddr_len / 8))) {
+		flog_err(EC_BGP_EVPN_ROUTE_INVALID,
+			 "%u:%s - Rx EVPN Type-2 NLRI with invalid IP address length %d",
+			 peer->bgp->vrf_id, peer->host, ipaddr_len);
+		goto fail;
+	}
+
 	if (ipaddr_len) {
 		ipaddr_len /= 8; /* Convert to bytes. */
 		p.prefix.macip_addr.ip.ipa_type = (ipaddr_len == IPV4_MAX_BYTELEN)
@@ -5120,6 +5132,15 @@ static int process_type3_route(struct peer *peer, afi_t afi, safi_t safi,
 
 	/* Get the IP. */
 	ipaddr_len = *pfx++;
+
+	/* Validate */
+	if (psize != 13 + (ipaddr_len / 8)) {
+		flog_err(EC_BGP_EVPN_ROUTE_INVALID,
+			 "%u:%s - Rx EVPN Type-3 NLRI with invalid IP address length %d",
+			 peer->bgp->vrf_id, peer->host, ipaddr_len);
+		return -1;
+	}
+
 	if (ipaddr_len == IPV4_MAX_BITLEN) {
 		SET_IPADDR_V4(&p.prefix.imet_addr.ip);
 		memcpy(&p.prefix.imet_addr.ip.ip.addr, pfx, IPV4_MAX_BYTELEN);
@@ -5213,6 +5234,13 @@ static int process_type5_route(struct peer *peer, afi_t afi, safi_t safi,
 	 * a simple check on the total size.
 	 */
 	if (psize == 34) {
+		if (ippfx_len > IPV4_MAX_BITLEN) {
+			flog_err(EC_BGP_EVPN_ROUTE_INVALID,
+				 "%u:%s - Rx EVPN Type-5 NLRI with IPv4 psize but IP Prefix length %d (max %d)",
+				 peer->bgp->vrf_id, peer->host, ippfx_len, IPV4_MAX_BITLEN);
+			evpn_overlay_free(evpn);
+			return -1;
+		}
 		SET_IPADDR_V4(&p.prefix.prefix_addr.ip);
 		memcpy(&p.prefix.prefix_addr.ip.ipaddr_v4, pfx, 4);
 		pfx += 4;
@@ -5353,7 +5381,8 @@ static void evpn_mpattr_encode_type5(struct stream *s, const struct prefix *p,
  *
  * NOTE: NO need to pop the VPN routes in two cases
  *  1) In free_vni_entry
- *     - Called by bgp_free()->bgp_evpn_cleanup().
+ *     - Called by bgp_free()->bgp_evpn_cleanup() or
+ *       bgp_delete()->bgp_evpn_cleanup() when terminating.
  *     - Since bgp_delete is called before bgp_free and we pop all the dest
  *       pertaining to bgp under delete.
  *  2) evpn_delete_vni() when user configures "no vni" since the withdraw
@@ -5362,14 +5391,36 @@ static void evpn_mpattr_encode_type5(struct stream *s, const struct prefix *p,
 void bgp_zebra_evpn_pop_items_from_announce_fifo(struct bgpevpn *vpn)
 {
 	struct bgp_dest *dest = NULL;
-	struct bgp_dest *dest_next = NULL;
+	struct bgp_bp_install_node *inode = NULL;
+	struct bgp_bp_install_node *inode_next = NULL;
 
-	for (dest = zebra_announce_first(&bm->zebra_announce_head); dest; dest = dest_next) {
-		dest_next = zebra_announce_next(&bm->zebra_announce_head, dest);
+	for (inode = zebra_announce_first(&bm->zebra_announce_early_head); inode;
+	     inode = inode_next) {
+		inode_next = zebra_announce_next(&bm->zebra_announce_early_head, inode);
+		if (inode->type != BGP_BP_INSTALL_ROUTE)
+			continue;
+		dest = inode->ptr;
 		if (dest->za_vpn == vpn) {
-			zebra_announce_del(&bm->zebra_announce_head, dest);
+			zebra_announce_del(&bm->zebra_announce_early_head, inode);
+			bgp_dest_table(dest)->bgp->zebra_announce_queue_cnt--;
 			bgp_path_info_unlock(dest->za_bgp_pi);
+			dest->za_inode = NULL;
 			bgp_dest_unlock_node(dest);
+			XFREE(MTYPE_BGP_BP_INSTALL_NODE, inode);
+		}
+	}
+	for (inode = zebra_announce_first(&bm->zebra_announce_head); inode; inode = inode_next) {
+		inode_next = zebra_announce_next(&bm->zebra_announce_head, inode);
+		if (inode->type != BGP_BP_INSTALL_ROUTE)
+			continue;
+		dest = inode->ptr;
+		if (dest->za_vpn == vpn) {
+			zebra_announce_del(&bm->zebra_announce_head, inode);
+			bgp_dest_table(dest)->bgp->zebra_announce_queue_cnt--;
+			bgp_path_info_unlock(dest->za_bgp_pi);
+			dest->za_inode = NULL;
+			bgp_dest_unlock_node(dest);
+			XFREE(MTYPE_BGP_BP_INSTALL_NODE, inode);
 		}
 	}
 }
@@ -7724,6 +7775,10 @@ void bgp_evpn_cleanup_on_disable(struct bgp *bgp)
  */
 void bgp_evpn_cleanup(struct bgp *bgp)
 {
+	/* Guard against double-call during termination */
+	if (!bgp->vnihash)
+		return;
+
 	hash_iterate(bgp->vnihash,
 		     (void (*)(struct hash_bucket *, void *))free_vni_entry,
 		     bgp);
@@ -8349,6 +8404,7 @@ void bgp_evpn_fill_rmac_nh_to_attr(struct bgp *bgp_vrf, struct attr *attr, struc
 			attr->nexthop = bgp_vrf->originator_ip.ipaddr_v4;
 			attr->mp_nexthop_global_in = bgp_vrf->originator_ip.ipaddr_v4;
 			attr->mp_nexthop_len = BGP_ATTR_NHLEN_IPV4;
+			bgp_attr_set(attr, BGP_ATTR_NEXT_HOP);
 		} else {
 			IPV6_ADDR_COPY(&attr->mp_nexthop_global, &bgp_vrf->originator_ip.ipaddr_v6);
 			attr->mp_nexthop_len = BGP_ATTR_NHLEN_IPV6_GLOBAL;
@@ -8369,6 +8425,7 @@ void bgp_evpn_fill_rmac_nh_to_attr(struct bgp *bgp_vrf, struct attr *attr, struc
 			if (bgp_vrf->evpn_info->pip_ip.ipaddr_v4.s_addr != INADDR_ANY) {
 				attr->nexthop = bgp_vrf->evpn_info->pip_ip.ipaddr_v4;
 				attr->mp_nexthop_global_in = bgp_vrf->evpn_info->pip_ip.ipaddr_v4;
+				bgp_attr_set(attr, BGP_ATTR_NEXT_HOP);
 			} else if (bgp_vrf->evpn_info->pip_ip.ipaddr_v4.s_addr == INADDR_ANY) {
 				if (bgp_debug_zebra(NULL))
 					zlog_debug("VRF %s evp %pFX advertise-pip primary ip is not configured",

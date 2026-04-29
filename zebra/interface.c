@@ -35,6 +35,7 @@
 #include "zebra/zebra_errors.h"
 #include "zebra/zebra_evpn_mh.h"
 #include "zebra/zebra_trace.h"
+#include "zebra/zebra_l2.h"
 
 DEFINE_MTYPE_STATIC(ZEBRA, ZINFO, "Zebra Interface Information");
 
@@ -1345,11 +1346,13 @@ static void zebra_if_addr_update_ctx(struct zebra_dplane_ctx *ctx,
 	}
 
 	/*
-	 * Linux kernel does not send route delete on interface down/addr del
+	 * Linux kernel does not send route delete on interface down/IPv4 last addr del
 	 * so we have to re-process routes it owns (i.e. kernel routes)
+	 * See rib_update_handle_kernel_route_down_possibility for more details
 	 */
-	if (op != DPLANE_OP_INTF_ADDR_ADD)
-		rib_update(RIB_UPDATE_KERNEL);
+	if (op != DPLANE_OP_INTF_ADDR_ADD && addr->family == AF_INET &&
+	    !if_has_connected_with_family(ifp, AF_INET))
+		rib_update(RIB_UPDATE_KERNEL_LAST_IPV4_ADDRESS_DELETED);
 }
 
 static void zebra_if_update_ctx(struct zebra_dplane_ctx *ctx,
@@ -1914,19 +1917,15 @@ static void interface_bridge_vlan_update(struct zebra_dplane_ctx *ctx,
 	uint16_t vid_range_start = 0;
 	int32_t i;
 
+	/* Could we have multiple bridge vlan infos? */
+	bvarray = dplane_ctx_get_ifp_bridge_vlan_info_array(ctx);
+	if (!bvarray)
+		return;
+
 	/* cache the old bitmap addrs */
 	old_vlan_bitmap = zif->vlan_bitmap;
 	/* create a new bitmap space for re-eval */
 	bf_init(zif->vlan_bitmap, IF_VLAN_BITMAP_MAX);
-
-	/* Could we have multiple bridge vlan infos? */
-	bvarray = dplane_ctx_get_ifp_bridge_vlan_info_array(ctx);
-	if (!bvarray) {
-		bf_free(zif->vlan_bitmap);
-		zif->vlan_bitmap = old_vlan_bitmap;
-
-		return;
-	}
 
 	for (i = 0; i < bvarray->count; i++) {
 		bvinfo = bvarray->array[i];
@@ -2896,13 +2895,31 @@ static void if_dump_vty(struct vty *vty, struct interface *ifp)
 		struct zebra_l2info_gre *gre_info;
 
 		gre_info = &zebra_if->l2info.gre;
-		if (gre_info->vtep_ip.s_addr != INADDR_ANY) {
-			vty_out(vty, "  VTEP IP: %pI4", &gre_info->vtep_ip);
-			if (gre_info->vtep_ip_remote.s_addr != INADDR_ANY)
-				vty_out(vty, " , remote %pI4",
-					&gre_info->vtep_ip_remote);
+		if (IS_IPADDR_V4(&gre_info->vtep_ip) &&
+		    gre_info->vtep_ip.ipaddr_v4.s_addr != INADDR_ANY) {
+			vty_out(vty, "  VTEP IP: %pI4", &gre_info->vtep_ip.ipaddr_v4);
+			if (IS_IPADDR_V4(&gre_info->vtep_ip_remote) &&
+			    gre_info->vtep_ip_remote.ipaddr_v4.s_addr != INADDR_ANY)
+				vty_out(vty, " , remote %pI4", &gre_info->vtep_ip_remote.ipaddr_v4);
 			vty_out(vty, "\n");
 		}
+		if (IS_IPADDR_V6(&gre_info->vtep_ip) &&
+		    IPV6_ADDR_CMP(&gre_info->vtep_ip.ipaddr_v6, &in6addr_any)) {
+			vty_out(vty, "  VTEP IP: %pI6", &gre_info->vtep_ip.ipaddr_v6);
+			if (IS_IPADDR_V6(&gre_info->vtep_ip_remote) &&
+			    IPV6_ADDR_CMP(&gre_info->vtep_ip_remote.ipaddr_v6, &in6addr_any))
+				vty_out(vty, " , remote %pI6", &gre_info->vtep_ip_remote.ipaddr_v6);
+			vty_out(vty, "\n");
+		}
+
+		if (gre_info->encap_flags) {
+			vty_out(vty, "  GRE encap flags ");
+			vty_out(vty, "checksum %s, ",
+				gre_info->encap_flags & ZEBRA_GRE_ENCAP_FLAGS_CSUM ? "on" : "off");
+			vty_out(vty, "checksum ipv6 %s\n",
+				gre_info->encap_flags & ZEBRA_GRE_ENCAP_FLAGS_CSUM6 ? "on" : "off");
+		}
+
 		if (gre_info->ifindex_link &&
 		    (gre_info->link_nsid != NS_UNKNOWN)) {
 			struct interface *nifp;
@@ -3300,14 +3317,30 @@ static void if_dump_vty_json(struct vty *vty, struct interface *ifp,
 		struct zebra_l2info_gre *gre_info;
 
 		gre_info = &zebra_if->l2info.gre;
-		if (gre_info->vtep_ip.s_addr != INADDR_ANY) {
+		if (IS_IPADDR_V4(&gre_info->vtep_ip) &&
+		    gre_info->vtep_ip.ipaddr_v4.s_addr != INADDR_ANY) {
 			json_object_string_addf(json_if, "vtepIp", "%pI4",
-						&gre_info->vtep_ip);
-			if (gre_info->vtep_ip_remote.s_addr != INADDR_ANY)
-				json_object_string_addf(
-					json_if, "vtepRemoteIp", "%pI4",
-					&gre_info->vtep_ip_remote);
+						&gre_info->vtep_ip.ipaddr_v4);
+			if (IS_IPADDR_V4(&gre_info->vtep_ip_remote) &&
+			    gre_info->vtep_ip_remote.ipaddr_v4.s_addr != INADDR_ANY)
+				json_object_string_addf(json_if, "vtepRemoteIp", "%pI4",
+							&gre_info->vtep_ip_remote.ipaddr_v4);
 		}
+		if (IS_IPADDR_V6(&gre_info->vtep_ip) &&
+		    IPV6_ADDR_CMP(&gre_info->vtep_ip.ipaddr_v6, &in6addr_any)) {
+			json_object_string_addf(json_if, "vtepIp", "%pI6",
+						&gre_info->vtep_ip.ipaddr_v6);
+			if (IS_IPADDR_V6(&gre_info->vtep_ip_remote) &&
+			    IPV6_ADDR_CMP(&gre_info->vtep_ip_remote.ipaddr_v6, &in6addr_any))
+				json_object_string_addf(json_if, "vtepRemoteIp", "%pI6",
+							&gre_info->vtep_ip_remote.ipaddr_v6);
+		}
+		json_object_boolean_add(json_if, "greEncapChecksum",
+					gre_info->encap_flags & ZEBRA_GRE_ENCAP_FLAGS_CSUM);
+		json_object_boolean_add(json_if, "greEncapIpv6Checksum",
+					gre_info->encap_flags & ZEBRA_GRE_ENCAP_FLAGS_CSUM6);
+
+
 		if (gre_info->ifindex_link
 		    && (gre_info->link_nsid != NS_UNKNOWN)) {
 			struct interface *nifp;

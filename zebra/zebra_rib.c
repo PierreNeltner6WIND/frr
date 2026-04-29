@@ -485,6 +485,17 @@ int route_entry_update_nhe(struct route_entry *re,
 	if (new_nhghe == NULL) {
 		old_nhg = re->nhe;
 
+		/*
+		 * If nhe_received points to the same NHG being deleted,
+		 * decrement its refcount and clear it. This handles the case
+		 * where re->nhe and re->nhe_received point to the same NHG
+		 * (e.g., when route was initially added with the same NHG).
+		 */
+		if (re->nhe_received && re->nhe_received == re->nhe) {
+			zebra_nhg_decrement_ref(re->nhe_received);
+			re->nhe_received = NULL;
+		}
+
 		re->nhe_id = 0;
 		re->nhe_installed_id = 0;
 		re->nhe = NULL;
@@ -504,13 +515,21 @@ done:
 	/* Detach / deref previous nhg */
 
 	if (old_nhg) {
+		/*
+		 * If nhe_received points to the old NHG, update it to
+		 * the new one. This handles the case where nhe_received
+		 * and nhe are the same (e.g., RMAC routes or routes
+		 * before resolution).
+		 *
+		 * Note: If nhe_received points to a different NHG
+		 * (the true original received NHG), it is left untouched.
+		 */
 		if (re->nhe_received == old_nhg) {
 			zebra_nhg_decrement_ref(old_nhg);
+			if (new_nhghe)
+				zebra_nhg_increment_ref(new_nhghe);
+			re->nhe_received = new_nhghe;
 		}
-		if (new_nhghe)
-			zebra_nhg_increment_ref(new_nhghe);
-
-		re->nhe_received = new_nhghe;
 
 		/*
 		 * Return true if we are deleting the previous NHE
@@ -543,9 +562,26 @@ int rib_handle_nhg_replace(struct nhg_hash_entry *old_entry,
 		for (rn = route_top(zrt->table); rn;
 		     rn = srcdest_route_next(rn)) {
 			RNODE_FOREACH_RE_SAFE (rn, re, next) {
-				if (re->nhe && re->nhe == old_entry)
+				if (re->nhe && re->nhe == old_entry) {
+					/*
+					 * If nhe_received points to old_entry,
+					 * migrate it to new_entry before
+					 * route_entry_update_nhe() releases
+					 * old_entry's re->nhe ref. This prevents
+					 * nhe_received from becoming a dangling
+					 * pointer when old_entry is force-freed
+					 * below. nhe_received that already points
+					 * to a different NHG (the true original
+					 * received NHG) is left untouched.
+					 */
+					if (re->nhe_received == old_entry) {
+						zebra_nhg_decrement_ref(old_entry);
+						zebra_nhg_increment_ref(new_entry);
+						re->nhe_received = new_entry;
+					}
 					ret += route_entry_update_nhe(re,
 								      new_entry);
+				}
 			}
 		}
 	}
@@ -1553,8 +1589,7 @@ static bool rib_route_match_ctx(const struct route_entry *re,
 			 * kernel routes.
 			 */
 			if (re->type == ZEBRA_ROUTE_STATIC && !async &&
-			    (re->distance != dplane_ctx_get_old_distance(ctx) ||
-			     re->tag != dplane_ctx_get_old_tag(ctx))) {
+			    re->distance != dplane_ctx_get_old_distance(ctx)) {
 				result = false;
 			} else if (re->type == ZEBRA_ROUTE_KERNEL &&
 				   re->metric != dplane_ctx_get_old_metric(ctx)) {
@@ -1580,8 +1615,7 @@ static bool rib_route_match_ctx(const struct route_entry *re,
 			 * kernel routes.
 			 */
 			if (re->type == ZEBRA_ROUTE_STATIC && !async &&
-			    (re->distance != dplane_ctx_get_distance(ctx) ||
-			     re->tag != dplane_ctx_get_tag(ctx))) {
+			    re->distance != dplane_ctx_get_distance(ctx)) {
 				result = false;
 			} else if (re->type == ZEBRA_ROUTE_KERNEL &&
 				   re->metric != dplane_ctx_get_metric(ctx)) {
@@ -1841,6 +1875,78 @@ done:
 	return rn;
 }
 
+static void rib_process_result_import_table_add(struct route_node *rn, struct route_entry *re)
+{
+	struct zebra_vrf *zvrf;
+	rib_dest_t *dest;
+	const char *rmap_name;
+	afi_t afi;
+	safi_t safi;
+
+	if (!rn || !re)
+		return;
+
+	dest = rib_dest_from_rnode(rn);
+	if (!dest || re != dest->selected_fib)
+		return;
+
+	if (CHECK_FLAG(re->status, ROUTE_ENTRY_REMOVED) ||
+	    !CHECK_FLAG(re->status, ROUTE_ENTRY_INSTALLED))
+		return;
+
+	afi = family2afi(rn->p.family);
+	zvrf = zebra_vrf_lookup_by_id(re->vrf_id);
+	if (!zvrf)
+		return;
+
+	for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++) {
+		if (!is_zebra_import_table_enabled(afi, safi, re->vrf_id, re->table))
+			continue;
+
+		rmap_name = zebra_get_import_table_route_map(afi, safi, re->table);
+		zebra_add_import_table_entry(zvrf, safi, rn, re, rmap_name);
+	}
+}
+
+static void rib_process_result_import_table_del(const struct zebra_dplane_ctx *ctx)
+{
+	const struct nexthop_group *nhg;
+	const struct prefix *p;
+	struct zebra_vrf *zvrf;
+	afi_t afi;
+	safi_t safi;
+	uint32_t table_id;
+	uint32_t metric;
+	uint32_t nhe_id;
+	uint32_t flags;
+	uint8_t distance;
+
+	if (!ctx)
+		return;
+
+	afi = dplane_ctx_get_afi(ctx);
+	table_id = dplane_ctx_get_table(ctx);
+	p = dplane_ctx_get_dest(ctx);
+	zvrf = zebra_vrf_lookup_by_id(dplane_ctx_get_vrf(ctx));
+	if (!p || !zvrf || afi == AFI_MAX)
+		return;
+
+	nhg = dplane_ctx_get_ng(ctx);
+	metric = dplane_ctx_get_metric(ctx);
+	distance = dplane_ctx_get_distance(ctx);
+	nhe_id = dplane_ctx_get_nhe_id(ctx);
+	flags = dplane_ctx_get_flags(ctx);
+
+	for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++) {
+		if (!is_zebra_import_table_enabled(afi, safi, dplane_ctx_get_vrf(ctx), table_id))
+			continue;
+
+		rib_delete(afi, safi, zvrf->vrf->vrf_id, ZEBRA_ROUTE_TABLE, table_id, flags, p,
+			   NULL, nhg ? nhg->nexthop : NULL, nhe_id, zvrf->table_id, metric,
+			   distance, false);
+	}
+}
+
 
 /*
  * Route-update results processing after async dataplane update.
@@ -2011,6 +2117,8 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 				 */
 				re->nhe_installed_id = dplane_ctx_get_nhe_id(ctx);
 
+				rib_process_result_import_table_add(rn, re);
+
 				/* Redistribute if this is the selected re */
 				if (dest && re == dest->selected_fib)
 					redistribute_update(rn, re, old_re);
@@ -2077,6 +2185,7 @@ static void rib_process_result(struct zebra_dplane_ctx *ctx)
 				UNSET_FLAG(re->status, ROUTE_ENTRY_INSTALLED);
 				UNSET_FLAG(re->status, ROUTE_ENTRY_FAILED);
 			}
+			rib_process_result_import_table_del(ctx);
 			zsend_route_notify_owner_ctx(ctx, ZAPI_ROUTE_REMOVED);
 
 			if (zvrf)
@@ -2457,6 +2566,11 @@ static void rib_re_nhg_free(struct route_entry *re)
 	} else if (re->nhe && re->nhe->nhg.nexthop)
 		nexthops_free(re->nhe->nhg.nexthop);
 
+	/*
+	 * Clean up nhe_received if it wasn't already cleared by
+	 * route_entry_update_nhe above. This happens when nhe_received
+	 * points to a different NHG than nhe (e.g., after route resolution).
+	 */
 	if (re->nhe_received) {
 		zebra_nhg_decrement_ref(re->nhe_received);
 		re->nhe_received = NULL;
@@ -3886,9 +4000,6 @@ rib_dest_t *zebra_rib_create_dest(struct route_node *rn)
 static void rib_link(struct route_node *rn, struct route_entry *re)
 {
 	rib_dest_t *dest;
-	afi_t afi;
-	safi_t safi;
-	const char *rmap_name;
 
 	assert(re && rn);
 
@@ -3901,18 +4012,6 @@ static void rib_link(struct route_node *rn, struct route_entry *re)
 	}
 
 	re_list_add_head(&dest->routes, re);
-
-	afi = (rn->p.family == AF_INET)
-		      ? AFI_IP
-		      : (rn->p.family == AF_INET6) ? AFI_IP6 : AFI_MAX;
-	for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++) {
-		if (is_zebra_import_table_enabled(afi, safi, re->vrf_id, re->table)) {
-			struct zebra_vrf *zvrf = zebra_vrf_lookup_by_id(re->vrf_id);
-
-			rmap_name = zebra_get_import_table_route_map(afi, safi, re->table);
-			zebra_add_import_table_entry(zvrf, safi, rn, re, rmap_name);
-		}
-	}
 
 	rib_queue_add(rn);
 }
@@ -3966,9 +4065,6 @@ void rib_unlink(struct route_node *rn, struct route_entry *re)
 
 void rib_delnode(struct route_node *rn, struct route_entry *re)
 {
-	afi_t afi;
-	safi_t safi;
-
 	if (IS_ZEBRA_DEBUG_RIB)
 		rnode_debug(rn, re->vrf_id, "rn %p, re %p, removing",
 			    (void *)rn, (void *)re);
@@ -3977,22 +4073,6 @@ void rib_delnode(struct route_node *rn, struct route_entry *re)
 		route_entry_dump(&rn->p, NULL, re);
 
 	SET_FLAG(re->status, ROUTE_ENTRY_REMOVED);
-
-	afi = (rn->p.family == AF_INET)
-		      ? AFI_IP
-		      : (rn->p.family == AF_INET6) ? AFI_IP6 : AFI_MAX;
-	for (safi = SAFI_UNICAST; safi < SAFI_MAX; safi++) {
-		if (is_zebra_import_table_enabled(afi, safi, re->vrf_id, re->table)) {
-			struct zebra_vrf *zvrf = zebra_vrf_lookup_by_id(re->vrf_id);
-
-			zebra_del_import_table_entry(zvrf, safi, rn, re);
-			/* Just clean up if non main table */
-			if (IS_ZEBRA_DEBUG_RIB)
-				zlog_debug("%s %s(%u):%pRN: Freeing route rn %p, re %p (%s)",
-					   safi2str(safi), vrf_id_to_name(re->vrf_id), re->vrf_id,
-					   rn, rn, re, zebra_route_string(re->type));
-		}
-	}
 
 	rib_queue_add(rn);
 }
@@ -4475,6 +4555,9 @@ static const char *rib_update_event2str(enum rib_update_event event)
 	case RIB_UPDATE_OTHER:
 		ret = "RIB_UPDATE_OTHER";
 		break;
+	case RIB_UPDATE_KERNEL_LAST_IPV4_ADDRESS_DELETED:
+		ret = "RIB_UPDATE_KERNEL_LAST_IPV4_ADDRESS_DELETED";
+		break;
 	case RIB_UPDATE_MAX:
 		break;
 	}
@@ -4485,7 +4568,7 @@ static const char *rib_update_event2str(enum rib_update_event event)
 /*
  * We now keep kernel routes, but we don't have any
  * trigger events for them when they are implicitly
- * deleted.  Since we are already walking the
+ * deleted. Since we are already walking the
  * entire table on a down event let's look at
  * the few kernel routes we may have
  */
@@ -4497,7 +4580,7 @@ rib_update_handle_kernel_route_down_possibility(struct route_node *rn,
 	bool alive = false;
 
 	for (ALL_NEXTHOPS(re->nhe->nhg, nexthop)) {
-		if (!nexthop->ifindex) {
+		if (!nexthop->ifindex || nexthop->type == NEXTHOP_TYPE_BLACKHOLE) {
 			/* blackhole nexthops have no interfaces */
 			alive = true;
 			break;
@@ -4506,10 +4589,38 @@ rib_update_handle_kernel_route_down_possibility(struct route_node *rn,
 		struct interface *ifp = if_lookup_by_index(nexthop->ifindex,
 							   nexthop->vrf_id);
 
-		if ((ifp && if_is_up(ifp)) || nexthop->type == NEXTHOP_TYPE_BLACKHOLE) {
+		if (!ifp || !if_is_up(ifp)) {
+			/* interface is not up, not alive */
+			continue;
+		}
+
+		/*
+		 * Kernel deletes IPv4 routes from interface when last IPv4 address is deleted
+		 * It is not important whether nexthop is reachable after address
+		 * is deleted - route is deleted only after last address deletion.
+		 *
+		 * See net/ipv4/fib_frontend.c fib_inetaddr_event,
+		 * net/ipv4/fib_semantics.c fib_sync_down_dev
+		 *
+		 * IPv6 has no such behaviour: routes are intact on last address deletion.
+		 */
+
+		/* If not IPv4, set alive
+		 * Check rn->p.family: for nexthop->type=NEXTHOP_TYPE_IFINDEX it
+		 * depends on destination only
+		 */
+		if (rn->p.family != AF_INET) {
 			alive = true;
 			break;
 		}
+
+		/* Check if there are any IPv4 addresses connected, if yes - set alive */
+		if (if_has_connected_with_family(ifp, AF_INET)) {
+			alive = true;
+			break;
+		}
+
+		/* Otherwise kernel deletes the route */
 	}
 
 	if (!alive) {
@@ -4534,8 +4645,9 @@ static void rib_update_route_node(struct route_node *rn, int type,
 	bool re_changed = false;
 
 	RNODE_FOREACH_RE_SAFE (rn, re, next) {
-		if (event == RIB_UPDATE_INTERFACE_DOWN && type == re->type &&
-		    type == ZEBRA_ROUTE_KERNEL)
+		if ((event == RIB_UPDATE_INTERFACE_DOWN ||
+		     event == RIB_UPDATE_KERNEL_LAST_IPV4_ADDRESS_DELETED) &&
+		    type == re->type && type == ZEBRA_ROUTE_KERNEL)
 			rib_update_handle_kernel_route_down_possibility(rn, re);
 		else if (type == ZEBRA_ROUTE_ALL || type == re->type) {
 			SET_FLAG(re->status, ROUTE_ENTRY_CHANGED);
@@ -4578,17 +4690,18 @@ void rib_update_table(struct route_table *table, enum rib_update_event event,
 		 * If we are looking at a route node and the node
 		 * has already been queued  we don't
 		 * need to queue it up again, unless it is
-		 * an interface down event as that we need
-		 * to process this no matter what.
+		 * an interface down event or last address down event
+		 * as that we need
+		 * to process these no matter what.
 		 */
-		if (rn->info &&
-		    CHECK_FLAG(rib_dest_from_rnode(rn)->flags,
-			       RIB_ROUTE_ANY_QUEUED) &&
-		    event != RIB_UPDATE_INTERFACE_DOWN)
+		if (rn->info && CHECK_FLAG(rib_dest_from_rnode(rn)->flags, RIB_ROUTE_ANY_QUEUED) &&
+		    event != RIB_UPDATE_INTERFACE_DOWN &&
+		    event != RIB_UPDATE_KERNEL_LAST_IPV4_ADDRESS_DELETED)
 			continue;
 
 		switch (event) {
 		case RIB_UPDATE_INTERFACE_DOWN:
+		case RIB_UPDATE_KERNEL_LAST_IPV4_ADDRESS_DELETED:
 		case RIB_UPDATE_KERNEL:
 			rib_update_route_node(rn, ZEBRA_ROUTE_KERNEL, event);
 			break;

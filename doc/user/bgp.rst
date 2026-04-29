@@ -1166,14 +1166,24 @@ BGP GR Show Commands
 BGP Show Neighbors Brief Command
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. clicmd:: show [ip] bgp [<view|vrf> VIEWVRFNAME] [<ipv4|ipv6>] neighbors [<A.B.C.D|X:X::X:X|WORD>] [brief] [json]
+.. clicmd:: show [ip] bgp [<view|vrf> VIEWVRFNAME] [<ipv4|ipv6>] neighbors [<A.B.C.D|X:X::X:X|WORD>] [graceful-restart] [json [brief [established|failed]]]
 
-   Display BGP neighbor information. When the ``brief`` option is included, output
-   is shortened to one line per neighbor (text) or a reduced JSON structure
-   (hostname, remoteAs, localAs, lastResetDueTo, status, lastResetTimerMsecs,
-   messageStats with totalSent/totalRecv, and addressFamilyInfo with
-   acceptedPrefixCounter/sentPrefixCounter per AFI/SAFI). Optional ``json``
-   formats the output as JSON.
+   Display BGP neighbor information. Without ``json``, output is the usual
+   detailed text. With ``json``, output is full neighbor detail in JSON.
+
+   The ``brief`` keyword is only valid together with ``json``. Use ``json brief``
+   for a reduced JSON object per neighbor (hostname, remoteAs, localAs,
+   lastResetDueTo, status, lastResetTimerMsecs, messageStats with
+   totalSent/totalRecv, and addressFamilyInfo with acceptedPrefixCounter and
+   sentPrefixCounter per AFI/SAFI).
+
+   After ``json brief``, you may add ``established`` to include only neighbors in
+   Established state, or ``failed`` for neighbors not in Established (for
+   example Idle, Active, Connect).
+
+   ``graceful-restart`` shows graceful-restart-related neighbor information; it
+   may be combined with ``json`` as in the command grammar above. See also
+   :clicmd:`show bgp [<ipv4|ipv6>] [<view|vrf> VRF] neighbors [<A.B.C.D|X:X::X:X|WORD>] graceful-restart [json]`.
 
 Long-lived Graceful Restart
 ---------------------------
@@ -1287,6 +1297,40 @@ IPv6 Support
    Using the ``bgp default ipv6-unicast`` configuration, IPv6 unicast
    address family is enabled by default for all new neighbors.
 
+.. clicmd:: nexthop prefer-global
+
+   This command is used within an IPv6 address family configuration (IPv6
+   unicast, IPv6 multicast, or IPv6 labeled-unicast) to control which nexthop
+   is installed to Zebra and the kernel routing table.
+
+   When a BGP UPDATE is received with both a global IPv6 address and a
+   link-local IPv6 address as nexthops, the BGP RIB stores both nexthops.
+   However, only one nexthop can be installed to Zebra for packet forwarding.
+   This command causes BGP to install the global IPv6 address to Zebra instead
+   of the link-local address. By default, FRR installs link-local addresses
+   when both are available.
+
+   **Important:** This command does not change the BGP RIB contents - the RIB
+   always contains both global and link-local nexthops when both are received.
+   It only affects which nexthop is selected for installation to Zebra and
+   subsequently to the kernel routing table.
+
+   This is similar to using ``set ipv6 next-hop prefer-global`` in a route-map,
+   but applies globally to all routes received for the configured address family,
+   rather than being applied on a per-route basis. When both configurations are
+   present, they work cooperatively (both set the same flag).
+
+   The ``no`` form of this command restores the default behavior of installing
+   link-local addresses to Zebra.
+
+   .. code-block:: frr
+
+      router bgp 65000
+       address-family ipv6 unicast
+        nexthop prefer-global
+       exit-address-family
+
+   Default: disabled (link-local addresses are installed to Zebra).
 
 .. clicmd:: bgp ipv6-auto-ra
 
@@ -1529,6 +1573,104 @@ Redistribute routes from a routing table number into BGP.
 
    Default max-delay is 0, i.e. the feature is off by default.
 
+
+.. clicmd:: bgp advertisement-delay (1-3600)
+
+   With ``update-delay``, both FIB programming and advertisements are deferred,
+   meaning the restarting router cannot forward local traffic until the delay
+   completes.  ``advertisement-delay`` takes a different approach: it allows
+   best-path selection and FIB programming to proceed normally so local
+   forwarding works immediately, while holding only the advertisements to
+   prevent the router from attracting remote traffic before it has a complete
+   routing state.
+
+   After a non-graceful restart, peers detect the session loss and withdraw
+   routes to this router, so the receiver has no routes to this router at all.
+   ``advertisement-delay`` controls when this router re-announces itself,
+   ensuring it only attracts traffic once it has fully converged.  When
+   graceful-restart is active, ``advertisement-delay`` is not started -- the
+   GR restarter path handles route retention separately.
+
+   This feature holds route advertisements to peers for a configured number of
+   seconds after the first peer reaches Established status.  The delay applies
+   to all address families (AFI/SAFI).  Note that this command is configured at
+   the global level and applies to all bgp instances/vrfs.  It cannot be used
+   at the same time as the per-vrf ``advertisement-delay`` command described
+   below.  The global and per-vrf approaches are mutually exclusive.
+
+   When the first peer reaches Established, a timer for the configured delay is
+   started.  During this period, best-path selection and FIB programming proceed
+   normally, but route advertisements to peers are held.  When the timer
+   expires, advertisements are released to all established peers.
+
+   When both ``update-delay`` and ``advertisement-delay`` are configured, both
+   timers start when the first peer reaches Established.  Route advertisements
+   are released at ``max(update-delay, advertisement-delay)``; whichever
+   finishes last triggers the release.
+
+   This feature runs after startup and also re-triggers on
+   ``clear bgp *``, similar to ``update-delay``.
+   It does not re-trigger if peers flap after the delay has completed.
+
+   Changing or removing this configuration while the timer is running takes
+   effect from the next startup or next ``clear bgp *``.
+
+   This parameter is unrelated to the per-neighbor or per-peer-group
+   ``advertisement-interval``, which controls the minimum time between
+   individual route advertisements to a specific peer.
+
+   Default max-delay is 0, i.e. the feature is off by default.
+
+
+.. clicmd:: advertisement-delay (1-3600)
+
+   With ``update-delay``, both FIB programming and advertisements are deferred,
+   meaning the restarting router cannot forward local traffic until the delay
+   completes.  ``advertisement-delay`` takes a different approach: it allows
+   best-path selection and FIB programming to proceed normally so local
+   forwarding works immediately, while holding only the advertisements to
+   prevent the router from attracting remote traffic before it has a complete
+   routing state.
+
+   After a non-graceful restart, peers detect the session loss and withdraw
+   routes to this router, so the receiver has no routes to this router at all.
+   ``advertisement-delay`` controls when this router re-announces itself,
+   ensuring it only attracts traffic once it has fully converged.  When
+   graceful-restart is active, ``advertisement-delay`` is not started -- the
+   GR restarter path handles route retention separately.
+
+   This feature holds route advertisements to peers for a configured number of
+   seconds after the first peer reaches Established status.  Note that this
+   command is configured under the specific bgp instance/vrf that the feature
+   is enabled for.  It cannot be used at the same time as the global
+   ``bgp advertisement-delay`` described above.  The global and per-vrf
+   approaches are mutually exclusive.
+
+   When the first peer reaches Established, a timer for the configured delay is
+   started.  During this period, best-path selection and FIB programming proceed
+   normally, but route advertisements to peers are held.  When the timer
+   expires, advertisements are released to all established peers.
+
+   When both ``update-delay`` and ``advertisement-delay`` are configured, both
+   timers start when the first peer reaches Established.  Route advertisements
+   are released at ``max(update-delay, advertisement-delay)``; whichever
+   finishes last triggers the release.
+
+   The delay applies to all address families (AFI/SAFI).
+
+   This feature runs after startup and also re-triggers on
+   ``clear bgp *``, similar to ``update-delay``.
+   It does not re-trigger if peers flap after the delay has completed.
+
+   Changing or removing this configuration while the timer is running takes
+   effect from the next startup or next ``clear bgp *``.
+
+   This parameter is unrelated to the per-neighbor or per-peer-group
+   ``advertisement-interval``, which controls the minimum time between
+   individual route advertisements to a specific peer.
+
+   Default max-delay is 0, i.e. the feature is off by default.
+
 .. clicmd:: table-map ROUTE-MAP-NAME
 
    This feature is used to apply a route-map on route updates from BGP to
@@ -1714,20 +1856,24 @@ Configuring Peers
 
    Set description of the peer.
 
-.. clicmd:: neighbor PEER interface [peer-group NAME]
+.. clicmd:: neighbor PEER interface [v6only] [peer-group NAME]
 
-   Configure an unnumbered BGP peer. ``PEER`` should be an interface name. The
-   session will be established via IPv6 link locals. To specify IPv4 session
-   addresses, see the ``neighbor PEER update-source`` command below.
+   Configure an interface-based (unnumbered) BGP peer; ``PEER`` is the interface
+   name. By default, *bgpd* tries to derive the neighbor IPv4 address from a /30
+   or /31 on the interface and establish the session over IPv4; if that is not
+   possible, it uses the peer's IPv6 link-local address. If ``v6only`` is
+   specified, *bgpd* skips trying IPv4 and establishes the session directly via
+   IPv6 link-local. For the local TCP source address, see
+   ``neighbor PEER update-source`` below.
 
-.. clicmd:: neighbor PEER interface remote-as <internal|external|auto|ASN>
+.. clicmd:: neighbor PEER interface [v6only] remote-as <internal|external|auto|ASN>
 
-   Configure an unnumbered BGP peer. ``PEER`` should be an interface name. The
-   session will be established via IPv6 link locals. Use ``internal`` for iBGP
-   and ``external`` for eBGP sessions, or specify an ASN if you wish.  Finally
-   this connection type is meant for point to point connections.  If you are
-   on an ethernet segment and attempt to use this with more than one bgp
-   neighbor, only one neighbor will come up, due to how this feature works.
+   Configure an interface-based BGP peer and set ``remote-as`` in one command.
+   Session address selection follows ``neighbor PEER interface`` above. Use
+   ``internal`` for iBGP and ``external`` for eBGP sessions, or specify an ASN
+   if you wish. This connection type is meant for point to point connections.
+   If you are on an ethernet segment and attempt to use this with more than one
+   bgp neighbor, only one neighbor will come up, due to how this feature works.
 
 .. clicmd:: neighbor PEER next-hop-self [force]
 
@@ -3566,7 +3712,7 @@ Configuration of the SRv6 SID used to advertise the Global IPv4/v6 Table is
 accomplished via the following command, which lives under ``address-family ipv4
 unicast``/``address-family ipv6 unicast`` only in the default VRF:
 
-.. clicmd:: sid export <(1..1048575)|auto|explicit X:X::X:X> [route-map RNAME]
+.. clicmd:: sid export <(1..1048575)|auto|explicit X:X::X:X> [behavior dt46] [route-map RNAME]
 
    Enables a SRv6 SID to be attached to routes in the current unicast
    address-family, received routes that already have a SID attached are ignored.
@@ -3577,8 +3723,35 @@ unicast``/``address-family ipv6 unicast`` only in the default VRF:
    configured or if SID allocation is failed, automatic or explicit SID
    assignment will not complete, which will block corresponding routes SID
    assignment.
+
    If the ``route-map RNAME`` is configured, routes are filtered according to
    its rules.
+
+   By default, the SID behavior is determined by the address-family:
+   **End.DT4** under ``address-family ipv4 unicast`` and **End.DT6** under
+   ``address-family ipv6 unicast``.  For uSID locators, ``uDT4`` and
+   ``uDT6`` are used respectively.
+
+   The optional ``behavior dt46`` keyword overrides this default and requests
+   an **End.DT46** SID (or ``uDT46`` for uSID locators).
+
+   Example — configure both the IPv4 and IPv6 address-families to use a
+   shared End.DT46 SID:
+
+   .. code-block:: frr
+
+      router bgp 65001
+       address-family ipv4 unicast
+        sid export auto behavior dt46
+       exit-address-family
+       address-family ipv6 unicast
+        sid export auto behavior dt46
+       exit-address-family
+      !
+
+   When both address-families specify ``behavior dt46``, the SID Manager
+   allocates a single SID that handles both IPv4 and IPv6 traffic.
+
 
 .. clicmd:: neighbor <X:X::X:X|WORD> <encapsulation-srv6|encapsulation-srv6-relax>
 
@@ -4675,11 +4848,11 @@ daemon project, while :clicmd:`show bgp` command is the new format. The choice
 has been done to keep old format with IPv4 routing table, while new format
 displays IPv6 routing table.
 
-.. clicmd:: show ip bgp [all] [wide|json [detail]]
+.. clicmd:: show ip bgp [all] [wide|json [detail|brief]]
 
 .. clicmd:: show ip bgp A.B.C.D [json]
 
-.. clicmd:: show bgp [all] [wide|json [detail]]
+.. clicmd:: show bgp [all] [wide|json [detail|brief]]
 
 .. clicmd:: show bgp X:X::X:X [json]
 
@@ -4710,6 +4883,13 @@ displays IPv6 routing table.
 
    If ``detail`` option is specified after ``json``, more verbose JSON output
    will be displayed.
+
+   If ``brief`` option is specified after ``json``, a brief JSON output is
+   displayed: only the loc-rib structure with prefix keys (no per-path
+   details). This is intended for large routing tables and automation. The
+   same ``json brief`` form applies to the VRF/address-family commands, e.g.
+   :clicmd:`show bgp vrf NAME ipv4 unicast json brief` and
+   :clicmd:`show bgp vrf NAME ipv6 unicast json brief`.
 
 .. clicmd:: show bgp router [json]
 
@@ -4795,9 +4975,12 @@ incoming/outgoing directions.
 
    EVPN prefixes can also be filtered by EVPN route type.
 
-.. clicmd:: show bgp l2vpn evpn route [detail] [type <ead|1|macip|2|multicast|3|es|4|prefix|5>] self-originate [json]
+.. clicmd:: show bgp l2vpn evpn route [detail] [type <ead|1|macip|2|multicast|3|es|4|prefix|5>] [self-originate] [brief] [json]
 
-   Display self-originated EVPN prefixes which can also be filtered by EVPN route type.
+   Display the global EVPN routing table. With ``detail``, show per-path
+   information. With ``brief`` and ``json``, output a minimal loc-rib in JSON
+   format (prefix keys per RD only, no paths or detail). Route type and
+   self-originate filters apply to both normal and brief output.
 
 .. clicmd:: show bgp vni <all|VNI> [vtep VTEP] [type <ead|1|macip|2|multicast|3>] [<detail|json>]
 
@@ -4971,7 +5154,7 @@ incoming/outgoing directions.
 
    If the ``json`` option is specified, output is displayed in JSON format.
 
-.. clicmd:: show [ip] bgp [afi] [safi] [all] neighbors A.B.C.D [advertised-routes|received-routes|filtered-routes] [<A.B.C.D/M|X:X::X:X/M> | detail] [json|wide]
+.. clicmd:: show [ip] bgp [afi] [safi] [all] neighbors A.B.C.D [advertised-routes|received-routes|filtered-routes] [<A.B.C.D/M|X:X::X:X/M> | detail] [json [brief] | wide]
 
    Display the routes advertised to a BGP neighbor or received routes
    from neighbor or filtered routes received from neighbor based on the
@@ -4997,6 +5180,9 @@ incoming/outgoing directions.
    prefixes.
 
    If ``json`` option is specified, output is displayed in JSON format.
+   ``brief`` is only valid immediately after ``json`` (e.g.
+   ``... advertised-routes json brief``); it selects compact per-prefix JSON
+   without per-path detail, like other ``show bgp`` ``json brief`` forms.
 
 .. clicmd:: show [ip] bgp [afi] [safi] [all] detail-routes [internal]
 
@@ -5499,12 +5685,34 @@ status in FIB:
 7. If the route which is already installed in dataplane is removed for some
    reason, sending withdraw message to peers is not currently supported.
 
-.. clicmd:: bgp suppress-fib-pending
+.. clicmd:: bgp suppress-fib-pending [(0-10000)]
 
    This command is applicable at the global level and at an individual
    bgp level.  If applied at the global level all bgp instances will
    wait for fib installation before announcing routes and there is no
    way to turn it off for a particular bgp vrf.
+
+   An optional advertisement delay in milliseconds can be specified to control
+   how long BGP waits after FIB installation before advertising routes to
+   peers. This provides a batching window that groups multiple route
+   advertisements into fewer BGP UPDATE messages.
+
+   The default delay is 1000 milliseconds. Setting the delay to ``0``
+   disables the batching window and advertises routes immediately after FIB
+   confirmation, which reduces convergence latency at the cost of more frequent
+   UPDATE messages. During bulk convergence, zebra already batch-processes FIB
+   confirmations, providing natural batching even with a low delay value.
+
+   Examples::
+
+      ! Enable with default 1000ms delay
+      bgp suppress-fib-pending
+
+      ! Enable with custom 50ms delay for low-latency environments
+      bgp suppress-fib-pending 50
+
+      ! Enable with no post-FIB batching delay
+      bgp suppress-fib-pending 0
 
 .. _routing-policy:
 

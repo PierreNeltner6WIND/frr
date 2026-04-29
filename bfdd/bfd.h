@@ -328,6 +328,9 @@ struct bfd_config_timers {
 	uint32_t required_min_echo_rx;
 };
 
+/** BFD profiles list. */
+extern struct bfdproflist bplist;
+
 #define BFD_RTT_SAMPLE 8
 
 /*
@@ -482,6 +485,12 @@ struct bfd_vrf_global {
 	struct vrf *vrf;
 
 	struct event *bg_ev[7];
+
+	/** Number of active BFD sessions using this VRF's sockets. */
+	int bg_session_count;
+
+	/** Number of SBFD reflectors using this VRF's sockets. */
+	int bg_reflector_count;
 };
 
 /* Forward declaration of data plane context struct. */
@@ -702,6 +711,8 @@ void bfd_initialize(void);
 void bfd_shutdown(void);
 void bfd_vrf_init(const char *context);
 void bfd_vrf_terminate(void);
+int bfd_vrf_start_sockets(struct bfd_vrf_global *bvrf);
+void bfd_vrf_stop_sockets(struct bfd_vrf_global *bvrf);
 struct bfd_vrf_global *bfd_vrf_look_by_session(struct bfd_session *bfd);
 struct bfd_session *bfd_id_lookup(uint32_t id);
 struct bfd_session *bfd_key_lookup(struct bfd_key *key);
@@ -760,7 +771,7 @@ struct bfd_profile *bfd_profile_lookup(const char *name);
  *
  * \param bp the BFD profile.
  */
-void bfd_profile_free(struct bfd_profile *bp);
+void bfd_profile_free(struct bfd_profile *bp, bool suppress_profile);
 
 /**
  * Apply a profile configuration to an existing BFD session. The non default

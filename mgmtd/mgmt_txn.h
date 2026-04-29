@@ -116,8 +116,8 @@ extern void mgmt_destroy_txn(uint64_t *txn_id);
  */
 extern void
 mgmt_txn_send_commit_config_req(uint64_t txn_id, uint64_t req_id, enum mgmt_ds_id src_ds_id,
-				struct mgmt_ds_ctx *dst_ds_ctx, enum mgmt_ds_id dst_ds_id,
-				struct mgmt_ds_ctx *src_ds_ctx, bool validate_only, bool abort,
+				struct mgmt_ds_ctx *src_ds_ctx, enum mgmt_ds_id dst_ds_id,
+				struct mgmt_ds_ctx *dst_ds_ctx, bool validate_only, bool abort,
 				bool implicit, bool unlock, struct mgmt_edit_req *edit);
 
 /**
@@ -182,8 +182,8 @@ extern int mgmt_txn_rollback_trigger_cfg_apply(struct mgmt_ds_ctx *src_ds_ctx,
 /* ---------------------------------------- */
 
 extern void mgmt_txn_handle_cfg_reply(uint64_t txn_id, struct mgmt_be_client_adapter *adapter);
-extern void mgmt_txn_handle_cfg_apply_reply(uint64_t txn_id,
-					    struct mgmt_be_client_adapter *adapter);
+extern void mgmt_txn_handle_cfg_apply_reply(uint64_t txn_id, struct mgmt_be_client_adapter *adapter,
+					    const char *errmsg);
 extern void mgmt_txn_handle_error_reply(struct mgmt_be_client_adapter *adapter, uint64_t txn_id,
 					uint64_t req_id, int error, const char *errstr);
 extern int mgmt_txn_handle_be_adapter_connect(struct mgmt_be_client_adapter *adapter, bool connect);

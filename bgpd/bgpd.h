@@ -21,6 +21,17 @@
 PREDECL_LIST(zebra_announce);
 PREDECL_LIST(zebra_l2_vni);
 
+enum bgp_bp_install_type {
+	BGP_BP_INSTALL_ROUTE,
+};
+
+struct bgp_bp_install_node {
+	struct zebra_announce_item zai;
+	enum bgp_bp_install_type type;
+	void *ptr;
+	bool early_queue;
+};
+
 /* For union sockunion.  */
 #include "queue.h"
 #include "sockunion.h"
@@ -171,12 +182,17 @@ struct bgp_master {
 	/* Should we do wait for fib install globally? */
 	bool wait_for_fib;
 
+	/* Advertisement delay (ms) for suppress-fib-pending (global) */
+	uint16_t suppress_fib_adv_delay;
+
 	/* EVPN multihoming */
 	struct bgp_evpn_mh_info *mh_info;
 
 	/* global update-delay timer values */
 	uint16_t v_update_delay;
 	uint16_t v_establish_wait;
+	/* global advertisement-delay timer value */
+	uint16_t v_advertisement_delay;
 
 	uint32_t flags;
 #define BM_FLAG_GRACEFUL_SHUTDOWN        (1 << 0)
@@ -219,6 +235,7 @@ struct bgp_master {
 
 	/* To preserve ordering of installations into zebra across all Vrfs */
 	struct zebra_announce_head zebra_announce_head;
+	struct zebra_announce_head zebra_announce_early_head;
 
 	struct event *t_bgp_zebra_l2_vni;
 	/* To preserve ordering of processing of L2 VNIs in BGP */
@@ -268,6 +285,9 @@ struct srv6_policy {
 	struct srv6_locator *sid_locator;
 	struct in6_addr *zebra_sid_last_sent;
 	char *rmap_name;
+	uint32_t flags;
+#define SRV6_POLICY_FLAG_BEHAVIOR_DT46 (1 << 0)
+#define SRV6_POLICY_FLAG_SID_AUTO      (1 << 1)
 };
 
 struct vpn_policy {
@@ -488,14 +508,6 @@ PREDECL_DLIST(bgp_clearing_info);
 /* Hash of peers in clearing info object */
 PREDECL_HASH(bgp_clearing_hash);
 
-/* List of dests that need to be processed in a clearing batch */
-PREDECL_LIST(bgp_clearing_destlist);
-
-struct bgp_clearing_dest {
-	struct bgp_dest *dest;
-	struct bgp_clearing_destlist_item link;
-};
-
 /* Info about a batch of peers that need to be cleared from the RIB.
  * If many peers need to be cleared, we process them in batches, taking
  * one walk through the RIB for each batch. This is only used for "all"
@@ -513,9 +525,6 @@ struct bgp_clearing_info {
 
 	/* Flags */
 	uint32_t flags;
-
-	/* List of dests - wrapped by a small wrapper struct */
-	struct bgp_clearing_destlist_head destlist;
 
 	/* Event to schedule/reschedule processing */
 	struct event *t_sched;
@@ -549,6 +558,13 @@ struct bgp_clearing_info {
 #define BGP_CLEARING_INFO_FLAG_RESUME (1 << 1)
 /* Batch has 'inner' resume info set */
 #define BGP_CLEARING_INFO_FLAG_INNER (1 << 2)
+
+/*
+ * Helper macro to check if a SAFI supports nexthop prefer-global.
+ * Currently limited to IPv6 UNICAST, MULTICAST, and LABELED_UNICAST.
+ */
+#define BGP_IPV6_SAFI_SUPPORTS_NEXTHOP_PREFER_GLOBAL(safi)                                        \
+	((safi) == SAFI_UNICAST || (safi) == SAFI_MULTICAST || (safi) == SAFI_LABELED_UNICAST)
 
 /* BGP instance structure.  */
 struct bgp {
@@ -670,6 +686,14 @@ struct bgp {
 	uint32_t restarted_peers;
 	uint32_t received_eors;
 #define BGP_UPDATE_DELAY_DEFAULT 0
+#define BGP_ADVERTISEMENT_DELAY_DEFAULT 0
+
+	/* Advertisement delay (hold route advertisements after first peer establishes) */
+	struct event *t_advertisement_delay;
+	bool advertisement_delay_over;
+	bool advertisement_delay_started;
+	uint16_t v_advertisement_delay;
+	char advertisement_delay_resume_time[64];
 
 	/* Reference bandwidth for BGP link-bandwidth. Used when
 	 * the LB value has to be computed based on some other
@@ -785,8 +809,6 @@ struct bgp {
 #define BGP_CONFIG_VRF_TO_VRF_EXPORT (1 << 10)
 /* vpnvx retain flag */
 #define BGP_VPNVX_RETAIN_ROUTE_TARGET_ALL (1 << 11)
-/* SRv6 unicast flag */
-#define BGP_CONFIG_SRV6_UNICAST_SID_AUTO (1 << 12)
 
 	/* BGP per AF peer count */
 	uint32_t af_peer_count[AFI_MAX][SAFI_MAX];
@@ -1042,6 +1064,9 @@ struct bgp {
 	uint32_t condition_filter_count;
 	struct event *t_condition_check;
 
+	/* Advertisement delay (ms) for suppress-fib-pending */
+	uint16_t suppress_fib_adv_delay;
+
 
 	/* BGP L3 service VPN SRv6 backend */
 	char srv6_locator_name[SRV6_LOCNAME_SIZE];
@@ -1086,6 +1111,16 @@ struct bgp {
 	bool allow_martian;
 
 	enum asnotation_mode asnotation;
+
+	/*
+	 * IPv6 nexthop prefer-global configuration.
+	 * When enabled, prefer global IPv6 addresses over link-local
+	 * addresses when both are available as nexthops.
+	 */
+	bool nexthop_prefer_global[AFI_MAX][SAFI_MAX];
+
+	/* Number of dests queued in the global zebra_announce_head for this instance */
+	uint32_t zebra_announce_queue_cnt;
 
 	/* BGP route flap dampening configuration */
 	struct bgp_damp_config damp[AFI_MAX][SAFI_MAX];
@@ -1814,6 +1849,10 @@ struct peer {
 #define PEER_FLAG_IP_TRANSPARENT     (1ULL << 45) /* ip-transparent */
 #define PEER_FLAG_RPKI_STRICT	     (1ULL << 46) /* RPKI strict mode */
 #define PEER_FLAG_CAPABILITY_SOFT_VERSION_NEW (1ULL << 47)
+#define PEER_FLAG_REMOTE_AS		      (1ULL << 48) /* remote-as override */
+/* BGP-LS per-peer link identifiers configured */
+#define PEER_FLAG_LS_LOCAL_LINK_ID  (1ULL << 49)
+#define PEER_FLAG_LS_REMOTE_LINK_ID (1ULL << 50)
 
 	/*
 	 *GR-Disabled mode means unset PEER_FLAG_GRACEFUL_RESTART
@@ -2228,6 +2267,10 @@ struct peer {
 
 	bool shut_during_cfg;
 
+	/* BGP-LS per-peer link identifiers (draft-ietf-idr-bgp-ls-bgp-only-fabric) */
+	uint32_t ls_local_link_id;
+	uint32_t ls_remote_link_id;
+
 #define BGP_ATTR_MAX 255
 	/* Path attributes discard */
 	bool discard_attrs[BGP_ATTR_MAX + 1];
@@ -2477,6 +2520,7 @@ struct cluster {
 #define BGP_DEFAULT_SELECT_DEFERRAL_TIME       120
 #define BGP_DEFAULT_RIB_STALE_TIME             500
 #define BGP_DEFAULT_UPDATE_ADVERTISEMENT_TIME  1
+#define BGP_DEFAULT_SUPPRESS_FIB_ADV_DELAY     1000 /* ms */
 
 /* BGP Long-lived Graceful Restart */
 #define BGP_DEFAULT_LLGR_STALE_TIME 0
@@ -2493,6 +2537,7 @@ struct cluster {
 #define BGP_DYNAMIC_NEIGHBORS_LIMIT_MAX      65535
 
 /* BGP AIGP */
+#define BGP_AIGP_TLV_MIN_LEN	 3 /* minimum generic TLV header (type + length field) */
 #define BGP_AIGP_TLV_RESERVED 0 /* AIGP Reserved */
 #define BGP_AIGP_TLV_METRIC 1   /* AIGP Metric */
 #define BGP_AIGP_TLV_METRIC_LEN 11
@@ -2527,11 +2572,9 @@ enum bgp_create_error_code {
 	BGP_ERR_INVALID_VALUE = -1,
 	BGP_ERR_INVALID_FLAG = -2,
 	BGP_ERR_INVALID_AS = -3,
-	BGP_ERR_PEER_GROUP_MEMBER = -4,
 	BGP_ERR_PEER_GROUP_NO_REMOTE_AS = -5,
 	BGP_ERR_PEER_GROUP_CANT_CHANGE = -6,
 	BGP_ERR_PEER_GROUP_MISMATCH = -7,
-	BGP_ERR_PEER_GROUP_PEER_TYPE_DIFFERENT = -8,
 	BGP_ERR_AS_MISMATCH = -9,
 	BGP_ERR_PEER_FLAG_CONFLICT = -10,
 	BGP_ERR_PEER_GROUP_SHUTDOWN = -11,
@@ -2705,11 +2748,14 @@ extern int bgp_handle_socket(struct bgp *bgp, struct vrf *vrf,
 extern void bgp_router_id_zebra_bump(vrf_id_t vrf_id, const struct prefix *prefix);
 extern void bgp_router_id_static_set(struct bgp *bgp, struct in_addr router_id);
 
-extern void bm_wait_for_fib_set(bool set);
-extern void bgp_suppress_fib_pending_set(struct bgp *bgp, bool set);
 extern struct cluster *cluster_lookup(struct bgp *bgp, const struct in_addr *cluster_id);
 extern void bgp_per_neighbor_cluster_id_add(struct bgp *bgp, struct in_addr *cluster_id);
 extern void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster_id);
+extern void bm_wait_for_fib_set(bool set, uint16_t adv_delay);
+extern void bgp_suppress_fib_pending_set(struct bgp *bgp, bool set,
+					  uint16_t adv_delay);
+extern uint16_t bgp_suppress_fib_get_adv_delay(struct bgp *bgp);
+
 extern void bgp_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id);
 extern void bgp_cluster_id_unset(struct bgp *bgp);
 
@@ -2739,6 +2785,9 @@ extern void bgp_listen_limit_unset(struct bgp *bgp);
 
 extern bool bgp_update_delay_active(struct bgp *bgp);
 extern bool bgp_update_delay_configured(struct bgp *bgp);
+extern bool bgp_advertisement_delay_active(struct bgp *bgp);
+extern bool bgp_advertisement_delay_applicable(struct bgp *bgp);
+extern bool bgp_advertisement_delay_configured(struct bgp *bgp);
 extern bool bgp_afi_safi_peer_exists(struct bgp *bgp, afi_t afi, safi_t safi);
 extern void peer_as_change(struct peer *peer, as_t as,
 			   enum peer_asn_type as_type, const char *as_str);
@@ -3323,16 +3372,9 @@ extern void bgp_session_reset_safe(struct peer *peer, struct listnode **nnode);
  * else return 'false'.
  */
 bool bgp_clearing_batch_add_peer(struct bgp *bgp, struct peer *peer);
-/* Add a prefix/dest to a clearing batch */
-void bgp_clearing_batch_add_dest(struct bgp_clearing_info *cinfo,
-				 struct bgp_dest *dest);
 /* Check whether a dest's peer is relevant to a clearing batch */
 bool bgp_clearing_batch_check_peer(struct bgp_clearing_info *cinfo,
 				   const struct peer *peer);
-/* Check whether a clearing batch has any dests to process */
-bool bgp_clearing_batch_dests_present(struct bgp_clearing_info *cinfo);
-/* Returns the next dest for batch clear processing */
-struct bgp_dest *bgp_clearing_batch_next_dest(struct bgp_clearing_info *cinfo);
 /* Done with a peer clearing batch; deal with refcounts, free memory */
 void bgp_clearing_batch_completed(struct bgp_clearing_info *cinfo);
 /* Start a new batch of peers to clear */

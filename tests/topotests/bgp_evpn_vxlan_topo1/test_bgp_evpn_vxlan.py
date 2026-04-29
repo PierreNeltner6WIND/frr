@@ -30,13 +30,14 @@ from lib.evpn import (
     evpn_mac_learn_test,
     evpn_mac_test_local_remote,
     evpn_show_vni_json_elide_ifindex,
+    evpn_check_bgp_imet,
 )
 from lib.topogen import Topogen, TopoRouter, get_topogen
 from lib.topolog import logger
 
 # Required to instantiate the topology builder class.
 
-pytestmark = [pytest.mark.bgpd, pytest.mark.ospfd]
+pytestmark = [pytest.mark.bgpd, pytest.mark.evpn, pytest.mark.ospfd]
 
 
 def build_topo(tgen):
@@ -488,6 +489,49 @@ def test_bgp_evpn_route_vni():
     logger.info("PE1: Test passed")
 
 
+def test_bgp_evpn_route_brief_json():
+    """
+    Test 'show bgp l2vpn evpn route brief json':
+    - Produces valid JSON with RD-keyed prefix list (minimal loc-rib).
+    - 'brief' without 'json' is rejected with a clear error.
+    """
+    tgen = get_topogen()
+    if tgen.routers_have_failure():
+        pytest.skip(tgen.errors)
+
+    pe1 = tgen.gears["PE1"]
+
+    # 1) brief without json must fail with clear message
+    out_no_json = pe1.vtysh_cmd("show bgp l2vpn evpn route brief", isjson=False)
+    if "% Unknown command" in out_no_json or "invalid" in out_no_json.lower():
+        pytest.skip("'brief' option not available in this build")
+    assert (
+        "brief" in out_no_json.lower()
+        and "requires" in out_no_json.lower()
+        and "json" in out_no_json.lower()
+    ), f"PE1: 'brief' without 'json' should report that brief requires json, got: {out_no_json[:300]}"
+
+    # 2) brief json: valid JSON, RD-keyed structure, no path detail
+    out = pe1.vtysh_cmd("show bgp l2vpn evpn route brief json", isjson=True)
+    if out is None:
+        # Command might not exist or returned non-JSON
+        raw = pe1.vtysh_cmd("show bgp l2vpn evpn route brief json", isjson=False)
+        if "% Unknown command" in raw or "invalid" in raw.lower():
+            pytest.skip("'brief json' not available in this build")
+        pytest.fail("Expected valid JSON from 'show bgp l2vpn evpn route brief json'")
+    assert isinstance(out, dict), "brief json output should be a JSON object"
+
+    # Top-level keys are RDs; values are prefix-keyed objects (brief = no paths)
+    for key, val in out.items():
+        if key in ("numPrefix", "numPaths"):
+            continue
+        assert isinstance(
+            val, dict
+        ), f"PE1: RD entry '{key}' in brief json should be a dict, got {type(val)}"
+
+    logger.info("PE1: show bgp l2vpn evpn route brief [json] tests passed")
+
+
 def test_evpn_l2vni_vlan_bridge_json():
     """
     Test L2 VNI JSON output includes vlan and bridge fields
@@ -587,6 +631,39 @@ def test_evpn_l3vni_vlan_bridge():
 
         assertmsg = "L3 VNI 999 (PE2): text output should contain 'Type: L3'"
         assert "Type: L3" in output, assertmsg
+
+
+def test_imet():
+    """
+    Verify PMSI tunnel attribute info
+    """
+    tgen = get_topogen()
+    if tgen.routers_have_failure():
+        pytest.skip(tgen.errors)
+
+    dut_name = "PE1"
+    dut = tgen.gears[dut_name]
+    rd = "10.30.30.30:2"
+    prefix = "[3]:[0]:[32]:[10.30.30.30]"
+    pmsi_label = 101
+    pmsi_id = "10.30.30.30"
+    # Check Imet from PE2 to PE1
+    test_fn = partial(evpn_check_bgp_imet, dut, rd, prefix, pmsi_label, pmsi_id)
+    _, result = topotest.run_and_expect(test_fn, None, count=10, wait=3)
+    assertmsg = f"{dut_name} IMET not present/incorrect, result:{result}"
+    assert result is None, assertmsg
+
+    # Check Imet from PE1 to PE2
+    dut_name = "PE2"
+    dut = tgen.gears[dut_name]
+    rd = "10.10.10.10:2"
+    prefix = "[3]:[0]:[32]:[10.10.10.10]"
+    pmsi_label = 101
+    pmsi_id = "10.10.10.10"
+    test_fn = partial(evpn_check_bgp_imet, dut, rd, prefix, pmsi_label, pmsi_id)
+    _, result = topotest.run_and_expect(test_fn, None, count=10, wait=3)
+    assertmsg = f"{dut_name} IMET not present/incorrect, result:{result}"
+    assert result is None, assertmsg
 
 
 def test_remote_neigh_uninstall_on_vxlan_down():

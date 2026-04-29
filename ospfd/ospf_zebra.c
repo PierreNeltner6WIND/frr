@@ -263,6 +263,10 @@ void ospf_zebra_add(struct ospf *ospf, struct prefix_ipv4 *p,
 	struct ospf_path *path;
 	struct listnode *node;
 
+	/* Do not install connected routes. */
+	if (or->connected)
+		return;
+
 	if (ospf->gr_info.restart_in_progress) {
 		if (IS_DEBUG_OSPF_GR)
 			zlog_debug("Zebra: Graceful Restart in progress -- not installing %pFX(%s)",
@@ -1024,10 +1028,17 @@ int ospf_distribute_check_connected(struct ospf *ospf, struct external_info *ei)
 	struct listnode *node;
 	struct ospf_interface *oi;
 
+	for (ALL_LIST_ELEMENTS_RO(ospf->oiflist, node, oi)) {
+		struct prefix address;
 
-	for (ALL_LIST_ELEMENTS_RO(ospf->oiflist, node, oi))
-		if (prefix_match(oi->address, (struct prefix *)&ei->p))
+		/* Clean up the address by removing the mask part */
+		prefix_copy(&address, oi->address);
+		apply_mask(&address);
+
+		if (prefix_same(&address, (struct prefix *)&ei->p))
 			return 0;
+	}
+
 	return 1;
 }
 

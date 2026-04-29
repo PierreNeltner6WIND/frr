@@ -26,10 +26,15 @@ pytestmark = [
     pytest.mark.babeld,
     pytest.mark.bgpd,
     pytest.mark.isisd,
+    pytest.mark.ldpd,
+    pytest.mark.mgmtd,
     pytest.mark.nhrpd,
+    pytest.mark.ospf6d,
     pytest.mark.ospfd,
     pytest.mark.pbrd,
     pytest.mark.ripd,
+    pytest.mark.ripngd,
+    pytest.mark.sharpd,
 ]
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -853,7 +858,7 @@ def test_ospfv2_interfaces():
 
             # Drop time in next due
             actual = re.sub(
-                r"Hello due in [-0-9\.]+s", "Hello due in XX.XXXs", actual
+                r"Hello due in [-0-9\.]+( usec)?s", "Hello due in XX.XXXs", actual
             )
             # Fix 'MTU mismatch detection: enabled' vs 'MTU mismatch detection:enabled' - accept both
             actual = re.sub(
