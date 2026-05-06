@@ -2381,6 +2381,8 @@ bool subgroup_announce_check(struct bgp_dest *dest, struct bgp_path_info *pi,
 	uint64_t cum_bw;
 	bool global_and_ll = false;
 	uint8_t num_labels;
+	struct cluster *cluster1;
+	struct cluster *cluster2;
 	mpls_label_t labels[BGP_MAX_LABELS] = { MPLS_INVALID_LABEL };
 
 	if (DISABLE_BGP_ANNOUNCE)
@@ -2668,47 +2670,47 @@ bool subgroup_announce_check(struct bgp_dest *dest, struct bgp_path_info *pi,
 						if (!CHECK_FLAG(cluster1->flags,
 										BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)){
 
-							if(CHECK_FLAG(bgp->flags,BGP_FLAG_NO_CLIENT_TO_CLIENT))
-								/* both peer are clients, from is part of a per-neighbor cluster but
-								* client-to-client reflection isn't configured in that cluster,
-								* client-to-client reflection is disabled at the bgp instance level*/
-								return false;
+						if(CHECK_FLAG(bgp->flags,BGP_FLAG_NO_CLIENT_TO_CLIENT))
+							/* both peer are clients, from is part of a per-neighbor cluster but
+							 * client-to-client reflection isn't configured in that cluster,
+							 * client-to-client reflection is disabled at the bgp instance level*/
+							return false;
 
-						}
-						else if (CHECK_FLAG(cluster1->flags,
-										BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER)){
+					}
+					else if (CHECK_FLAG(cluster1->flags,
+									BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER)){
+						
+						if(CHECK_FLAG(bgp->flags,BGP_FLAG_NO_CLIENT_TO_CLIENT)){
 							
-							if(CHECK_FLAG(bgp->flags,BGP_FLAG_NO_CLIENT_TO_CLIENT)){
-								
-								if(!CHECK_FLAG(peer->af_flags[afi][safi],
-												PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+							if(!CHECK_FLAG(peer->af_flags[afi][safi],
+											PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
 
-									/* both peer are clients, from is part of a per-neighbor cluster and
-									* client-to-client reflection is enabled in that cluster but
-									* client-to-client reflection is disabled at the bgp instance level
-									* and peer is part of the global cluster*/
-									return false;
-								
-								cluster2=per_neighbor_cluster_lookup(bgp,&peer->per_neighbor_cluster[afi][safi]);
-								if(!IPV4_ADDR_SAME(&cluster1->cluster_id,&cluster2->cluster_id))
-									/* both peer are clients, from is part of a per-neighbor cluster and
-									* client-to-client reflection is enabled in that cluster but
-									* client-to-client reflection is disabled at the bgp instance level
-									* and peer is part of another per-neighbor cluster*/
-									return false;
-
-							}
-						}
-						else {
-							
-							if(CHECK_FLAG(bgp->flags,BGP_FLAG_NO_CLIENT_TO_CLIENT))
 								/* both peer are clients, from is part of a per-neighbor cluster and
-								* client-to-client reflection is disabled both in that cluster and
-								* at the bgp instance level*/
+							 	 * client-to-client reflection is enabled in that cluster but
+							 	 * client-to-client reflection is disabled at the bgp instance level
+								 * and peer is part of the global cluster*/
+								return false;
+							
+							cluster2=per_neighbor_cluster_lookup(bgp,&peer->per_neighbor_cluster[afi][safi]);
+							if(!IPV4_ADDR_SAME(&cluster1->cluster_id,&cluster2->cluster_id))
+								/* both peer are clients, from is part of a per-neighbor cluster and
+							 	 * client-to-client reflection is enabled in that cluster but
+							 	 * client-to-client reflection is disabled at the bgp instance level
+								 * and peer is part of another per-neighbor cluster*/
 								return false;
 
-							if (CHECK_FLAG(peer->af_flags[afi][safi],
-											PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)){
+						}
+					}
+					else {
+						
+						if(CHECK_FLAG(bgp->flags,BGP_FLAG_NO_CLIENT_TO_CLIENT))
+							/* both peer are clients, from is part of a per-neighbor cluster and
+							 * client-to-client reflection is disabled both in that cluster and
+							 * at the bgp instance level*/
+							return false;
+
+						if(CHECK_FLAG(peer->af_flags[afi][safi],
+										PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)){
 
 								cluster2=per_neighbor_cluster_lookup(bgp,&peer->per_neighbor_cluster[afi][safi]);
 								if(IPV4_ADDR_SAME(&cluster1->cluster_id,&cluster2->cluster_id))
@@ -2780,8 +2782,9 @@ bool subgroup_announce_check(struct bgp_dest *dest, struct bgp_path_info *pi,
 		}
 		else {
 			if (!CHECK_FLAG(peer->af_flags[afi][safi],
-					PEER_FLAG_REFLECTOR_CLIENT))
-				return false;
+				PEER_FLAG_REFLECTOR_CLIENT))
+			/*peer and from are not client peers*/
+			return false;
 		}
 	}
 

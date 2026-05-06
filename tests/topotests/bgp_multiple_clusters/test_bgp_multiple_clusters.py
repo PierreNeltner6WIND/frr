@@ -305,6 +305,7 @@ def test_bgp_multiple_cluster_cluster_lists():
             "10.0.0.9":["20.0.0.2"],
         },
     }
+    tgen.mininet_cli()
     for r in expected_results.keys():
         logger.info("Checking {} routes".format(r.name))
 
@@ -458,7 +459,6 @@ def test_client_to_client_reflection_per_neighbor_cluster():
             "10.0.0.3":["20.0.0.2"],
         }
     }
-    tgen.mininet_cli()
     for r in expected_results.keys():
         logger.info("Checking {} routes".format(r.name))
 

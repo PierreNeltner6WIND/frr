@@ -761,6 +761,8 @@ struct bgp {
 #define BGP_FLAG_VRF_MAY_LISTEN		    (1ULL << 44)
 #define BGP_FLAG_SOFT_VERSION_CAPABILITY_NEW (1ULL << 45)
 #define BGP_FLAG_USE_RECURSIVE_WEIGHT (1ULL << 46)
+#define BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER (1ULL << 47)
+#define BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED (1ULL << 48)
 
 /* Use current (imported) path's attributes instead of source path's attributes
  * for bestpath comparison of imported paths.
@@ -2760,9 +2762,13 @@ extern void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *
 extern void bgp_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id);
 extern void bgp_cluster_id_unset(struct bgp *bgp);
 extern void bgp_neighbor_cluster_id_unset(struct bgp *bgp, struct in_addr *cluster_id, 
-									struct peer *peer, afi_t afi, safi_t safi);
+					struct peer *peer, afi_t afi, safi_t safi);
 extern void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, 
-									struct peer *peer, afi_t afi, safi_t safi);
+					struct peer *peer, afi_t afi, safi_t safi);
+extern void bgp_cluster_client_to_client_unset(struct bgp *bgp, const char *per_neighbor, 
+					struct in_addr *cluster_id);
+extern void bgp_cluster_client_to_client_set(struct bgp *bgp, const char *per_neighbor, 
+					struct in_addr *cluster_id, const char *configuration);
 
 
 extern void bgp_confederation_id_set(struct bgp *bgp, as_t as,

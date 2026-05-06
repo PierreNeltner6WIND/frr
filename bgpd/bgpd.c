@@ -3722,7 +3722,7 @@ int peer_group_bind(struct bgp *bgp, union sockunion *su, struct peer *peer,
 	return 0;
 }
 
-static struct cluster *cluster_new(void)
+static struct cluster *per_neighbor_cluster_new(void)
 {
 	struct cluster *cluster;
 	cluster= XCALLOC(MTYPE_PER_NEIGHBOR_CLUSTER, sizeof(struct cluster));
@@ -3730,13 +3730,12 @@ static struct cluster *cluster_new(void)
 	return cluster;
 }
 
-static void cluster_free(struct cluster *cluster)
+static void per_neighbor_cluster_free(struct cluster *cluster)
 {
-	list_delete(&cluster->peers);
 	XFREE(MTYPE_PER_NEIGHBOR_CLUSTER, cluster);
 }
 
-struct cluster *cluster_lookup(struct bgp *bgp, const struct in_addr *cluster_id)
+struct cluster *per_neighbor_cluster_lookup(struct bgp *bgp, const struct in_addr *cluster_id)
 {
 	struct cluster *cluster;
 	struct listnode *node, *nnode;
@@ -4678,7 +4677,7 @@ int bgp_delete(struct bgp *bgp)
 
 	/*Free per-neighbor clusters*/
 	for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, next, cluster))
-		cluster_free(cluster);
+		per_neighbor_cluster_free(cluster);
 	
 	/* Cancel peer connection errors event */
 	event_cancel(&bgp->t_conn_errors);
@@ -6853,7 +6852,7 @@ void bgp_per_neighbor_cluster_id_add(struct bgp *bgp, struct in_addr *cluster_id
 		return;
 	}
 
-	cluster = cluster_new();
+	cluster = per_neighbor_cluster_new();
 	IPV4_ADDR_COPY(&cluster->cluster_id, cluster_id);
 	listnode_add_sort(bgp->per_neighbor_clusters, cluster);
 
@@ -6884,7 +6883,7 @@ void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster
 	struct listnode *node, *nnode;
 	struct peer* peer;
 
-	cluster=cluster_lookup(bgp,cluster_id);
+	cluster=per_neighbor_cluster_lookup(bgp,cluster_id);
 	if (!cluster)
 		return;
 
@@ -6896,7 +6895,7 @@ void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster
 	/*if there is no more references: delete the cluster*/
 	cn = listnode_lookup(bgp->per_neighbor_clusters, cluster);
 	list_delete_node(bgp->per_neighbor_clusters,cn);
-	cluster_free(cluster);
+	per_neighbor_cluster_free(cluster);
 
 	/* Clear all IBGP peer. */
 	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
@@ -6907,7 +6906,81 @@ void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster
 
 		peer_notify_config_change(peer->connection);
 	}
+}
 
+void bgp_cluster_client_to_client_set(struct bgp *bgp, const char * per_neighbor, struct in_addr *cluster_id, const char *configuration)
+{
+	struct cluster *cluster;
+	struct listnode *node, *nnode;
+	struct peer* peer;
+
+	/* if the target cluster is a per-neighbor cluster*/
+	if (per_neighbor){
+		cluster=per_neighbor_cluster_lookup(bgp,cluster_id);
+		/*if the cluster doesn't exist or if it didn't have any client-to-client policy: add a references to that cluster*/
+		if (!cluster || !CHECK_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)){
+			bgp_per_neighbor_cluster_id_add(bgp,cluster_id);
+			cluster=per_neighbor_cluster_lookup(bgp,cluster_id);
+		}
+
+		/* set the client-to-client-reflection to configured state and configure it with the desired value*/
+		SET_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED);
+		if (configuration)
+			SET_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER);
+		else{
+			UNSET_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER);}
+	}
+
+	/* if the target cluster is the global cluster*/
+	else{
+		/* set the client-to-client-reflection to configured state and configure it with the desired value*/
+		SET_FLAG(bgp->flags,BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED);
+		if (configuration)
+			SET_FLAG(bgp->flags,BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER);
+		else
+			UNSET_FLAG(bgp->flags,BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER);
+	}
+
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+}
+
+void bgp_cluster_client_to_client_unset(struct bgp *bgp, const char * per_neighbor, struct in_addr *cluster_id)
+{
+	struct cluster *cluster;
+	struct listnode *node, *nnode;
+	struct peer* peer;
+
+	/* if the target cluster is a per-neighbor cluster*/
+	if (per_neighbor){
+		cluster=per_neighbor_cluster_lookup(bgp,cluster_id);
+		if (!cluster)
+			return;
+
+		UNSET_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED);
+		bgp_per_neighbor_cluster_id_delete(bgp,cluster_id);
+
+	}
+	/* if the target cluster is the global cluster*/
+	else
+		UNSET_FLAG(bgp->flags,BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED);
+	
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
 }
 
 /* neighbor weight. */
