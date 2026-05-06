@@ -7007,7 +7007,7 @@ void bgp_neighbor_cluster_id_unset(struct bgp *bgp, struct peer *peer, afi_t afi
 	if (peer_group_active(peer)) {
 		peer_af_flag_inherit(peer, afi, safi, PEER_FLAG_CLUSTER_ID);
 		PEER_ATTR_INHERIT(peer, peer->group, cluster[afi][safi]);
-		PEER_ATTR_INHERIT(peer, peer->group, cluster_ptr[afi][safi]);
+		PEER_ATTR_INHERIT(peer, peer->group, cluster_flags[afi][safi]);
 
 		/*ensures refcnt is incremented when the cluster is inherited from the group*/
 		if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_CLUSTER_ID))
@@ -7127,6 +7127,113 @@ void bgp_per_neighbor_cluster_id_delete(struct bgp *bgp, struct in_addr *cluster
 				peer_clear_soft(peer, afi, safi, BGP_CLEAR_SOFT_IN);
 		}
 	}
+}
+
+/* Clear all cluster members and give them their new flags*/
+static void clear_and_update_flags_for_cluster_members(struct bgp *bgp, const char *per_neighbor,
+						       struct in_addr *cluster_id,
+						       struct cluster *cluster)
+{
+	struct listnode *node, *nnode;
+	struct peer *peer;
+	struct in_addr *global_cluster_id;
+	afi_t afi;
+	safi_t safi;
+
+	if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
+		global_cluster_id = &bgp->cluster_id;
+	else
+		global_cluster_id = &bgp->router_id;
+
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+		FOREACH_AFI_SAFI (afi, safi) {
+			/* Filter all peers that are not in the modified cluster */
+			if (!peer->afc[afi][safi])
+				continue;
+			if (per_neighbor) {
+				if (!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_CLUSTER_ID) ||
+				    !IPV4_ADDR_SAME(cluster_id, &peer->cluster[afi][safi]))
+					continue;
+			} else {
+				if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_CLUSTER_ID) &&
+				    !IPV4_ADDR_SAME(global_cluster_id, &peer->cluster[afi][safi]))
+					continue;
+			}
+			/*if the neighbor has a cluster-id configured it should inherit from the
+			 *new cluster flags
+			 */
+			if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_CLUSTER_ID)) {
+				if (cluster && !CHECK_FLAG(cluster->flags, CLUSTER_FLAG_GLOBAL))
+					peer->cluster_flags[afi][safi] = cluster->flags;
+				else
+					peer->cluster_flags[afi][safi] =
+						copy_global_cluster_flags(bgp);
+			}
+			if (CHECK_FLAG(peer->sflags, PEER_STATUS_GROUP))
+				continue;
+			peer_clear_soft(peer, afi, safi, BGP_CLEAR_SOFT_BOTH);
+		}
+	}
+}
+
+void bgp_cluster_client_to_client_set(struct bgp *bgp, const char *per_neighbor,
+				      struct in_addr *cluster_id, const char *configuration)
+{
+	struct cluster *cluster = NULL;
+
+	/* if the target cluster is a per-neighbor cluster*/
+	if (per_neighbor) {
+		cluster = per_neighbor_cluster_lookup(bgp, cluster_id);
+		/*if the cluster doesn't exist or if it didn't have any client-to-client policy: add a references to that cluster*/
+		if (!cluster ||
+		    !CHECK_FLAG(cluster->flags,
+				CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)) {
+			cluster = bgp_per_neighbor_cluster_id_add(bgp, cluster_id);
+		}
+
+		/* set the client-to-client-reflection to configured state and configure it with the desired value*/
+		SET_FLAG(cluster->flags, CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED);
+		if (configuration)
+			SET_FLAG(cluster->flags, CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER);
+		else
+			UNSET_FLAG(cluster->flags, CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER);
+	}
+
+	/* if the target cluster is the global cluster*/
+	else {
+		/* set the client-to-client-reflection to configured state and configure it with the desired value*/
+		SET_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED);
+		if (configuration)
+			SET_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER);
+		else
+			UNSET_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER);
+	}
+	clear_and_update_flags_for_cluster_members(bgp, per_neighbor, cluster_id, cluster);
+}
+
+void bgp_cluster_client_to_client_unset(struct bgp *bgp, const char *per_neighbor,
+					struct in_addr *cluster_id)
+{
+	struct cluster *cluster = NULL;
+
+	/* if the target cluster is a per-neighbor cluster*/
+	if (per_neighbor) {
+		cluster = per_neighbor_cluster_lookup(bgp, cluster_id);
+		if (!cluster || !CHECK_FLAG(cluster->flags,
+					    CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED))
+			return;
+
+		UNSET_FLAG(cluster->flags, CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED);
+	}
+	/* if the target cluster is the global cluster*/
+	else
+		UNSET_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED);
+
+	clear_and_update_flags_for_cluster_members(bgp, per_neighbor, cluster_id, cluster);
+	if (per_neighbor)
+		bgp_per_neighbor_cluster_id_delete(bgp, cluster_id);
 }
 
 /* neighbor weight. */
