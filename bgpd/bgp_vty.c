@@ -5516,6 +5516,52 @@ DEFPY (neighbor_cluster_id,
 	return CMD_SUCCESS;
 }
 
+DEFPY (bgp_cluster_id_client_to_client,
+       bgp_cluster_id_client_to_client_cmd,
+       "[no] bgp cluster-id <per-neighbor$per_neighbor|global$global> [<A.B.C.D|(1-4294967295)>$id] client-to-client-reflection [<true$conf_true|false$conf_false>]",
+	   NO_STR
+       BGP_STR
+       "Configure Route-Reflector Cluster-id\n"
+	   "Configure a per-neighbor cluster\n"
+	   "Configure the global cluster\n"
+       "Route-Reflector Cluster-id in IP address format\n"
+       "Route-Reflector Cluster-id as 32 bit quantity\n"
+	   "Configure client to client route reflection\n"
+       "reflection of routes explicitely allowed\n"
+	   "reflection of routes explicitely forbiden\n"
+	   )
+{
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+	int ret;
+	struct in_addr cluster;
+
+	if (per_neighbor){
+		if (id){
+			ret = inet_aton(id, &cluster);
+			if (!ret) {
+				vty_out(vty, "%% Malformed bgp cluster identifier\n");
+				return CMD_WARNING_CONFIG_FAILED;
+			}
+		}
+		else {
+			vty_out(vty, "%% specify a per-neighbor cluster\n");
+			return CMD_WARNING_CONFIG_FAILED;
+		}
+	}
+
+	if (no) {
+		bgp_cluster_client_to_client_unset(bgp, per_neighbor,&cluster);
+	}
+	else {
+		if (!conf_true && !conf_false){
+			vty_out(vty, "%% specify a value for client-to-client reflection\n");
+				return CMD_WARNING_CONFIG_FAILED;
+		}
+		bgp_cluster_client_to_client_set(bgp, per_neighbor, &cluster,conf_true);
+	}
+	return CMD_SUCCESS;
+}
+
 DEFPY (bgp_allow_martian,
        bgp_allow_martian_cmd,
        "[no]$no bgp allow-martian-nexthop",
@@ -22178,7 +22224,16 @@ int bgp_config_write(struct vty *vty)
 		if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
 			vty_out(vty, " bgp cluster-id %pI4\n",
 				&bgp->cluster_id);
+
+		/*BGP client-to-client reflection in the global cluster*/
+		if (CHECK_FLAG(bgp->flags,BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED)){
+			if (CHECK_FLAG(bgp->flags,BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER))
+				vty_out(vty, " bgp cluster-id global client-to-client-reflection true\n");
+			else
+				vty_out(vty, " bgp cluster-id global client-to-client-reflection false\n");
+		}
 		
+		/*BGP per-neighbor clusters*/
 		for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
 			if (CHECK_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)){
 				if (CHECK_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER))
