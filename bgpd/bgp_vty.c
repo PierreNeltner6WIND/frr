@@ -12400,6 +12400,102 @@ DEFUN (show_bgp_views,
 	return CMD_SUCCESS;
 }
 
+DEFPY (show_bgp_clusters,
+       show_bgp_clusters_cmd,
+       "show [ip] bgp [<view$view|vrf$vrf> VIEWVRFNAME$name] clusters [json$json]",
+       SHOW_STR
+       IP_STR
+       BGP_STR
+	   BGP_INSTANCE_HELP_STR
+       "Show the referenced clusters\n"
+	   JSON_STR)
+{
+	struct listnode *node, *nnode;
+	struct bgp *bgp;
+	struct cluster *cluster;
+
+	/* [<vrf> VIEWVRFNAME] */
+	if (name && (!strmatch(name, VRF_DEFAULT_NAME) || view))
+		bgp = bgp_lookup_by_name(name);
+	else
+		bgp = bgp_get_default();
+
+	if (!json) {
+		if (!bgp) {
+			vty_out(vty, "%% BGP instance not found\n");
+			return CMD_WARNING;
+		}
+		vty_out(vty, "BGP global cluster:\n");
+		if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
+			vty_out(vty, "\t cluster-id %pI4\n", &bgp->cluster_id);
+		else
+			vty_out(vty, "\t cluster-id %pI4\n", &bgp->router_id);
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED)) {
+			if (CHECK_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER))
+				vty_out(vty, "\t client to client reflection: true\n");
+			else
+				vty_out(vty, "\t client to client reflection: false\n");
+		} else
+			vty_out(vty, "\t client to client reflection: not configured\n\n");
+
+		vty_out(vty, "Referenced BGP per neighbor cluster:\n");
+		for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
+			vty_out(vty, "\t cluster %pI4\n", &cluster->cluster_id);
+			if (CHECK_FLAG(cluster->flags, CLUSTER_FLAG_GLOBAL))
+				vty_out(vty, "\t\t override by global\n");
+			if (CHECK_FLAG(cluster->flags,
+				       CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)) {
+				if (CHECK_FLAG(cluster->flags,
+					       CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER))
+					vty_out(vty, "\t\t client to client reflection: true\n");
+				else
+					vty_out(vty, "\t\t client to client reflection: false\n");
+			} else
+				vty_out(vty, "\t\t client to client reflection: not configured\n");
+			vty_out(vty, "\t\t number of references: %d\n", cluster->references);
+		}
+		return CMD_SUCCESS;
+	}
+	/*json format*/
+	if (!bgp) {
+		vty_out(vty, "{}\n");
+		return CMD_WARNING;
+	}
+	vty_out(vty, "{\n \"global\":{\n");
+	if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
+		vty_out(vty, "  \"cluster-id\" : %pI4,\n", &bgp->cluster_id);
+	else
+		vty_out(vty, "  \"cluster-id\" : %pI4,\n", &bgp->router_id);
+	if (CHECK_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED)) {
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER))
+			vty_out(vty, "  \"client-to-client-reflection\": \"true\"\n },\n");
+		else
+			vty_out(vty, "  \"client-to-client-reflection\": \"false\"\n },\n");
+	} else
+		vty_out(vty, "  \"client-to-client-reflection\": \"not-configured\"\n },\n");
+
+	vty_out(vty, " \"per-neighbor\":{\n");
+	for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
+		vty_out(vty, "  %pI4:{\n", &cluster->cluster_id);
+		if (CHECK_FLAG(cluster->flags,
+			       CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)) {
+			if (CHECK_FLAG(cluster->flags, CLUSTER_FLAG_GLOBAL)) {
+				vty_out(vty, "   \"global\": \"true\",\n");
+			} else {
+				vty_out(vty, "   \"global\": \"false\",\n");
+			}
+			if (CHECK_FLAG(cluster->flags, CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER))
+				vty_out(vty, "   \"client-to-client-reflection\": \"true\",\n");
+			else
+				vty_out(vty, "   \"client-to-client-reflection\": \"false\",\n");
+		} else
+			vty_out(vty, "   \"client-to-client-reflection\": \"not-configured\",\n");
+		vty_out(vty, "   \"references\": %d\n  },\n", cluster->references);
+	}
+	vty_out(vty, " }\n}\n");
+	return CMD_SUCCESS;
+}
+
 static inline void calc_peers_cfgd_estbd(struct bgp *bgp, int *peers_cfgd,
 					 int *peers_estbd)
 {
@@ -24733,6 +24829,9 @@ void bgp_vty_init(void)
 
 	/* "show [ip] bgp vrfs" commands. */
 	install_element(VIEW_NODE, &show_bgp_vrfs_cmd);
+
+	/* "show [ip] bgp clusters" commands. */
+	install_element(VIEW_NODE, &show_bgp_clusters_cmd);
 
 	/* Some overall BGP information */
 	install_element(VIEW_NODE, &show_bgp_router_cmd);
