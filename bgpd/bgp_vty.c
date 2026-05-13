@@ -12409,7 +12409,7 @@ DEFPY (show_bgp_clusters,
 			
 			vty_out(vty, "\t cluster %pI4\n",&cluster->cluster_id);
 			if(CHECK_FLAG(cluster->flags,CLUSTER_FLAG_GLOBAL))
-				vty_out(vty,"\t\t override by default");
+				vty_out(vty,"\t\t override by default\n");
 			if(CHECK_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)){
 				if(CHECK_FLAG(cluster->flags,BGP_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER))
 					vty_out(vty,"\t\t client to client reflection: true\n");
@@ -24743,6 +24743,9 @@ void bgp_vty_init(void)
 
 	/* "show [ip] bgp vrfs" commands. */
 	install_element(VIEW_NODE, &show_bgp_vrfs_cmd);
+
+	/* "show [ip] bgp clusters" commands. */
+	install_element(VIEW_NODE, &show_bgp_clusters_cmd);
 
 	/* Some overall BGP information */
 	install_element(VIEW_NODE, &show_bgp_router_cmd);
