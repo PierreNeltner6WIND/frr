@@ -2542,9 +2542,11 @@ static void peer_group2peer_config_copy_af(struct peer_group *group,
 		PEER_ATTR_INHERIT(peer, group, weight[afi][safi]);
 
 	/*per neighbor cluster-id*/
-	if (!CHECK_FLAG(pflags_ovrd, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+	zlog_debug("check cond");
+	if (!CHECK_FLAG(pflags_ovrd, PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)){
 		PEER_ATTR_INHERIT(peer, group, per_neighbor_cluster[afi][safi]);
-
+		zlog_debug("inherit attr");
+	}
 	/* default-originate route-map */
 	if (!CHECK_FLAG(pflags_ovrd, PEER_FLAG_DEFAULT_ORIGINATE)) {
 		PEER_STR_ATTR_INHERIT(peer, group, default_rmap[afi][safi].name,
