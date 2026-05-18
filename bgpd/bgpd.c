@@ -6845,8 +6845,8 @@ void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, st
 			continue;
 
 		/* Set flag and configuration on peer-group member. */
-		if (member->per_neighbor_cluster[afi][safi] != cluster_id) {
-			member->per_neighbor_cluster[afi][safi] = cluster_id;
+		if (!IPV4_ADDR_SAME(&member->per_neighbor_cluster[afi][safi],cluster_id)) {
+			member->per_neighbor_cluster[afi][safi] = *cluster_id;
 			peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
 			peer_notify_config_change(peer->connection);
 		}
@@ -6857,7 +6857,7 @@ void bgp_neighbor_cluster_id_unset(struct bgp *bgp, struct in_addr *cluster_id, 
 {
 	struct listnode *node, *nnode;
 	struct peer* member;
-	
+
 	/* do nothing when the value is already configured as desired*/
 	if (!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
 		return;
