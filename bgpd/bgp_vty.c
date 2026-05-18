@@ -16058,7 +16058,7 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 			vty_out(vty, "  Route-Reflector Client\n");
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
-			vty_out(vty, "  Cluster-id: %pI4\n",p->per_neighbor_cluster[afi][safi]);
+			vty_out(vty, "  Cluster-id: %pI4\n",&p->per_neighbor_cluster[afi][safi]);
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_RSERVER_CLIENT))
 			vty_out(vty, "  Route-Server Client\n");
