@@ -15725,6 +15725,12 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 			       PEER_FLAG_REFLECTOR_CLIENT))
 			json_object_boolean_true_add(json_addr,
 						     "routeReflectorClient");
+		
+		if (CHECK_FLAG(p->af_flags[afi][safi],
+					PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+			json_object_boolean_true_add(json_addr,
+						     "clusterId");
+			
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_RSERVER_CLIENT))
 			json_object_boolean_true_add(json_addr,
@@ -16050,6 +16056,9 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_REFLECTOR_CLIENT))
 			vty_out(vty, "  Route-Reflector Client\n");
+		if (CHECK_FLAG(p->af_flags[afi][safi],
+			       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
+			vty_out(vty, "  Cluster-id: %pI4\n",p->per_neighbor_cluster[afi][safi]);
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_RSERVER_CLIENT))
 			vty_out(vty, "  Route-Server Client\n");
