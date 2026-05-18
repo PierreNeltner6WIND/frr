@@ -6812,6 +6812,7 @@ void peer_on_policy_change(struct peer *peer, afi_t afi, safi_t safi,
 void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer, afi_t afi, safi_t safi)
 {
 	struct listnode *node, *nnode;
+	struct peer* member;
 	/* do nothing when the value is already configured as desired*/
 	if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)
 	    && IPV4_ADDR_SAME(&peer->per_neighbor_cluster[afi][safi], cluster_id))
@@ -6854,6 +6855,9 @@ void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, st
 
 void bgp_neighbor_cluster_id_unset(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer, afi_t afi, safi_t safi)
 {
+	struct listnode *node, *nnode;
+	struct peer* member;
+	
 	/* do nothing when the value is already configured as desired*/
 	if (!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
 		return;
