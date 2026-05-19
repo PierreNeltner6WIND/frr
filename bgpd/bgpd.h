@@ -2764,7 +2764,7 @@ extern void bgp_cluster_id_unset(struct bgp *bgp);
 extern void bgp_neighbor_cluster_id_unset(struct bgp *bgp, struct in_addr *cluster_id, 
 					struct peer *peer, afi_t afi, safi_t safi);
 extern void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, 
-					struct peer *peer, afi_t afi, safi_t safi);
+					struct peer *peer, const char *peer_str, afi_t afi, safi_t safi);
 extern void bgp_cluster_client_to_client_unset(struct bgp *bgp, const char *per_neighbor, 
 					struct in_addr *cluster_id);
 extern void bgp_cluster_client_to_client_set(struct bgp *bgp, const char *per_neighbor, 
