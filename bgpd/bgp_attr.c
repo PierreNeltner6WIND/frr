@@ -5721,8 +5721,11 @@ bgp_size_t bgp_packet_attribute(struct bgp *bgp, struct peer *peer, struct strea
 				       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)) {
 				stream_put_in_addr(s, &from->per_neighbor_cluster[afi][safi]);
 			}
-			/*if the originator of the prefix is a client of the default cluster*/
-			else if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)) {
+			/*if the originator of the prefix is a client of the default cluster
+			 * or if it is a non-client-to-client reflection and 
+			 * prefer-global-cluster option is configured */
+			else if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT) ||
+				 CHECK_FLAG(bgp->flags, BGP_FLAG_PREFER_GLOBAL_CLUSTER)) {
 				if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID)) {
 					stream_put_in_addr(s, &bgp->cluster_id);
 				} else {
@@ -5751,8 +5754,11 @@ bgp_size_t bgp_packet_attribute(struct bgp *bgp, struct peer *peer, struct strea
 				       PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)) {
 				stream_put_in_addr(s, &from->per_neighbor_cluster[afi][safi]);
 			}
-			/*if the originator of the prefix is a client of the default cluster*/
-			else if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)) {
+			/*if the originator of the prefix is a client of the default cluster
+			 * or if it is a non-client-to-client reflection and 
+			 * prefer-global-cluster option is configured */
+			else if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT) ||
+				 CHECK_FLAG(bgp->flags, BGP_FLAG_PREFER_GLOBAL_CLUSTER)) {
 				if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID)) {
 					stream_put_in_addr(s, &bgp->cluster_id);
 				} else {
