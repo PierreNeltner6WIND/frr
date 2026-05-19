@@ -5509,7 +5509,7 @@ DEFPY (neighbor_cluster_id,
 		return CMD_WARNING_CONFIG_FAILED;
 	}
 	if(no) bgp_neighbor_cluster_id_unset(bgp, &cluster, peer, afi, safi);
-	else bgp_neighbor_cluster_id_set(bgp, &cluster, peer, afi, safi);
+	else bgp_neighbor_cluster_id_set(bgp, &cluster, peer, neighbor_str, afi, safi);
 	bgp_clear_star_soft_out(vty, bgp->name);
 
 	return CMD_SUCCESS;

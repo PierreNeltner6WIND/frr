@@ -6809,7 +6809,7 @@ void peer_on_policy_change(struct peer *peer, afi_t afi, safi_t safi,
 }
 
 /* BGP's cluster-id control. */
-void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer, afi_t afi, safi_t safi)
+void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, struct peer *peer, const char *peer_str, afi_t afi, safi_t safi)
 {
 	struct listnode *node, *nnode;
 	struct peer* member;
@@ -6820,7 +6820,7 @@ void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, st
 	 * does nothing (same as when creating a peer part of a group with no configuration)*/
 	if(!peer){
 		ret = str2sockunion(peer_str, &su);
-		peer = peer_create(su, NULL, bgp, bgp->as, NULL, AS_UNSPECIFIED,
+		peer = peer_create(&su, NULL, bgp, bgp->as, NULL, AS_UNSPECIFIED,
 				   NULL, true, NULL, CONNECTION_OUTGOING);
 	}
 	/* do nothing when the value is already configured as desired*/
