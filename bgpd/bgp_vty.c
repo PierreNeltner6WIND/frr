@@ -5504,9 +5504,6 @@ DEFPY (neighbor_cluster_id,
 	peer = peer_and_group_lookup_vty(vty, neighbor);
 	ret = inet_aton(id, &cluster);
 
-	if(!peer){
-		return CMD_WARNING_CONFIG_FAILED;
-	}
 	if(!ret){
 		vty_out(vty, "%% Malformed bgp cluster identifier\n");
 		return CMD_WARNING_CONFIG_FAILED;

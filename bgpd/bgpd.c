@@ -6813,6 +6813,16 @@ void bgp_neighbor_cluster_id_set(struct bgp *bgp, struct in_addr *cluster_id, st
 {
 	struct listnode *node, *nnode;
 	struct peer* member;
+	union sockunion su;
+	int ret;
+
+	/*if the peer doesn't exist configures a peer that doesn't have as num and so
+	 * does nothing (same as when creating a peer part of a group with no configuration)*/
+	if(!peer){
+		ret = str2sockunion(peer_str, &su);
+		peer = peer_create(su, NULL, bgp, bgp->as, NULL, AS_UNSPECIFIED,
+				   NULL, true, NULL, CONNECTION_OUTGOING);
+	}
 	/* do nothing when the value is already configured as desired*/
 	if (CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID)
 	    && IPV4_ADDR_SAME(&peer->per_neighbor_cluster[afi][safi], cluster_id))
@@ -6858,6 +6868,9 @@ void bgp_neighbor_cluster_id_unset(struct bgp *bgp, struct in_addr *cluster_id, 
 	struct listnode *node, *nnode;
 	struct peer* member;
 
+	/*do nothing if the peer doesn't exist*/
+	if(!peer)
+		return;
 	/* do nothing when the value is already configured as desired*/
 	if (!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_PER_NEIGHBOR_CLUSTER_ID))
 		return;
