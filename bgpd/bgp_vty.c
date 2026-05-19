@@ -5562,6 +5562,37 @@ DEFPY (bgp_cluster_id_client_to_client,
 	return CMD_SUCCESS;
 }
 
+DEFPY (bgp_cluster_id_prefer_global,
+       bgp_cluster_id_prefer_global_cmd,
+       "[no] bgp cluster-id non-client-to-client prefer-global-cluster-id",
+	   NO_STR
+       BGP_STR
+       "Configure Route-Reflector Cluster-ids\n"
+	   "configure the behavior of no-client to client reflections\n"
+	   "add the global cluster-id to the cluster-list of prefixs that are reflected from non-client to client\n")
+{
+	struct peer *peer;
+	struct listnode *node, *nnode;
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+	
+	if (no)
+		UNSET_FLAG(bgp->flags,BGP_FLAG_PREFER_GLOBAL_CLUSTER);
+	else
+		SET_FLAG(bgp->flags,BGP_FLAG_PREFER_GLOBAL_CLUSTER);
+
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+	return CMD_SUCCESS;
+
+}
+
 DEFPY (bgp_allow_martian,
        bgp_allow_martian_cmd,
        "[no]$no bgp allow-martian-nexthop",
@@ -22332,6 +22363,10 @@ int bgp_config_write(struct vty *vty)
 			else
 				vty_out(vty, " bgp cluster-id global client-to-client-reflection false\n");
 		}
+
+		/* BGP non-client-to-client prefer-global-cluster-id */
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_PREFER_GLOBAL_CLUSTER))
+			vty_out(vty, " bgp cluster-id non-client-to-client prefer-global-cluster-id\n");
 		
 		/*BGP per-neighbor clusters*/
 		for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
@@ -23226,6 +23261,7 @@ void bgp_vty_init(void)
 	install_element(BGP_NODE, &bgp_cluster_id_cmd);
 	install_element(BGP_NODE, &no_bgp_cluster_id_cmd);
 	install_element(BGP_NODE, &bgp_cluster_id_client_to_client_cmd);
+	install_element(BGP_NODE, &bgp_cluster_id_prefer_global_cmd);
 
 	/* "bgp no-rib" commands. */
 	install_element(CONFIG_NODE, &bgp_norib_cmd);
