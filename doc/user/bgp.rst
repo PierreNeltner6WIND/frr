@@ -5776,7 +5776,13 @@ cluster-list of the prefix.
 This command changes this behavior, the global cluster-id of the route-reflector is added
 instead.
 
+.. clicmd:: bgp cluster-id loose-cluster-list-check
 
+In the spirit of rfc4456 the default behavior of a route-reflector when receiving 
+a route with one of it's per-neighbor clusters in the cluster-list is to drop that
+route in order to prevent loops.
+This command changes this behavior, now the route is not dropped, it is just not 
+advertised to members of that cluster.
 
 .. _bgp-suppress-fib:
 

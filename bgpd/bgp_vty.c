@@ -5588,6 +5588,36 @@ DEFPY (bgp_cluster_id_prefer_global,
 	return CMD_SUCCESS;
 }
 
+DEFPY (bgp_cluster_id_loose_cluster_check,
+       bgp_cluster_id_loose_cluster_check_cmd,
+       "[no] bgp cluster-id loose-cluster-list-check",
+	   NO_STR
+       BGP_STR
+       "Configure Route-Reflector Cluster-ids\n"
+	   "stop rejecting prefixs with known cluster-id, but doesn't advertise them to member of that cluster\n")
+{
+	struct peer *peer;
+	struct listnode *node, *nnode;
+	VTY_DECLVAR_CONTEXT(bgp, bgp);
+
+	if (no)
+		UNSET_FLAG(bgp->flags, BGP_FLAG_LOOSE_CLUSTER_LIST_CHECK);
+	else
+		SET_FLAG(bgp->flags, BGP_FLAG_LOOSE_CLUSTER_LIST_CHECK);
+
+	/* Clear all IBGP peer. */
+	for (ALL_LIST_ELEMENTS(bgp->peer, node, nnode, peer)) {
+		if (peer->sort != BGP_PEER_IBGP)
+			continue;
+
+		peer_set_last_reset(peer, PEER_DOWN_CLID_CHANGE);
+
+		peer_notify_config_change(peer->connection);
+	}
+	return CMD_SUCCESS;
+}
+
+
 DEFPY (bgp_allow_martian,
        bgp_allow_martian_cmd,
        "[no]$no bgp allow-martian-nexthop",
@@ -22440,6 +22470,10 @@ int bgp_config_write(struct vty *vty)
 			vty_out(vty,
 				" bgp cluster-id non-client-to-client prefer-global-cluster-id\n");
 
+		/* BGP loose-cluster-list-check */
+		if (CHECK_FLAG(bgp->flags, BGP_FLAG_LOOSE_CLUSTER_LIST_CHECK))
+			vty_out(vty, " bgp cluster-id loose-cluster-list-check\n");
+
 		/*BGP per-neighbor clusters*/
 		for (ALL_LIST_ELEMENTS(bgp->per_neighbor_clusters, node, nnode, cluster)) {
 			if (CHECK_FLAG(cluster->flags,
@@ -23339,6 +23373,7 @@ void bgp_vty_init(void)
 	install_element(BGP_NODE, &no_bgp_cluster_id_cmd);
 	install_element(BGP_NODE, &bgp_cluster_id_client_to_client_cmd);
 	install_element(BGP_NODE, &bgp_cluster_id_prefer_global_cmd);
+	install_element(BGP_NODE, &bgp_cluster_id_loose_cluster_check_cmd);
 
 	/* "bgp no-rib" commands. */
 	install_element(CONFIG_NODE, &bgp_norib_cmd);
