@@ -2689,12 +2689,12 @@ bool subgroup_announce_check(struct bgp_dest *dest, struct bgp_path_info *pi,
 	/* IBGP reflection check. */
 	if (ibgp_to_ibgp && !samepeer_safe) {
 		/* A route from a Client peer. */
-		if (CHECK_FLAG(from->af_flags[afi][safi],
-			       PEER_FLAG_REFLECTOR_CLIENT)) {
+		if (CHECK_FLAG(from->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT)) {
 			/* Reflect to all the Non-Client peers and also to the
-			   Client peers other than the originator.  Originator
-			   check
-			   is already done.  So there is noting to do. */
+			 * Client peers other than the originator. Originator
+			 * check
+			 * is already done. So there is nothing to do.
+			 */
 			/* no bgp client-to-client reflection check. */
 			if (CHECK_FLAG(bgp->flags,
 				       BGP_FLAG_NO_CLIENT_TO_CLIENT))
@@ -2703,9 +2703,9 @@ bool subgroup_announce_check(struct bgp_dest *dest, struct bgp_path_info *pi,
 					return false;
 		} else {
 			/* A route from a Non-client peer. Reflect to all other
-			   clients. */
-			if (!CHECK_FLAG(peer->af_flags[afi][safi],
-					PEER_FLAG_REFLECTOR_CLIENT))
+			 * clients.
+			 */
+			if (!CHECK_FLAG(peer->af_flags[afi][safi], PEER_FLAG_REFLECTOR_CLIENT))
 				return false;
 		}
 	}
