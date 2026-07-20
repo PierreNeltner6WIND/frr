@@ -5557,7 +5557,7 @@ DEFUN (neighbor_remote_as,
 
 DEFPY (neighbor_cluster_id,
 	neighbor_cluster_id_cmd,
-	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id [<A.B.C.D|(1-4294967295)>$id]",
+	"[no] neighbor <A.B.C.D|X:X::X:X|WORD>$neighbor cluster-id ![<A.B.C.D|(1-4294967295)>$id]",
 	NO_STR
 	NEIGHBOR_STR
 	NEIGHBOR_ADDR_STR2
