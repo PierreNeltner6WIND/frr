@@ -5014,7 +5014,6 @@ int bgp_delete(struct bgp *bgp)
 			per_neighbor_cluster_free(cluster);
 		}
 	}
-	per_neighbor_cluster_list_fini(&bgp->per_neighbor_clusters);
 
 	/* Cancel peer connection errors event */
 	event_cancel(&bgp->t_conn_errors);
@@ -5180,6 +5179,7 @@ void bgp_free(struct bgp *bgp)
 
 	list_delete(&bgp->group);
 	list_delete(&bgp->peer);
+	per_neighbor_cluster_list_fini(&bgp->per_neighbor_clusters);
 
 	hash_clean_and_free(&bgp->connectionhash, NULL);
 
