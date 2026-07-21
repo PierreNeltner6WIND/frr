@@ -16044,7 +16044,6 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 	struct peer_af *paf;
 	char orf_pfx_name[BUFSIZ];
 	int orf_pfx_count;
-	char cluster_id[INET_ADDRSTRLEN];
 	json_object *json_af = NULL;
 	json_object *json_prefA = NULL;
 	json_object *json_addr = NULL;
@@ -16135,7 +16134,7 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 
 		if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_CLUSTER_ID))
 			json_object_string_addf(json_addr, "clusterId",
-					       "%pI4",cluster_id);
+					       "%pI4",&p->cluster[afi][safi]);
 
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_RSERVER_CLIENT))
