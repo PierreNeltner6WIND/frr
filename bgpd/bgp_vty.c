@@ -12628,26 +12628,26 @@ DEFPY (show_bgp_clusters,
 	}
 	json_one_cluster = json_object_new_object();
 	if (CHECK_FLAG(bgp->config, BGP_CONFIG_CLUSTER_ID))
-		json_object_string_addf(json_one_cluster, "cluster-id", "%pI4", &bgp->cluster_id);
+		json_object_string_addf(json_one_cluster, "clusterId", "%pI4", &bgp->cluster_id);
 	else
-		json_object_string_addf(json_one_cluster, "cluster-id", "%pI4", &bgp->router_id);
+		json_object_string_addf(json_one_cluster, "clusterId", "%pI4", &bgp->router_id);
 	if (CHECK_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER_CONFIGURED)) {
 		if (CHECK_FLAG(bgp->flags, BGP_FLAG_CLIENT_TO_CLIENT_GLOBAL_CLUSTER))
-			json_object_string_add(json_one_cluster, "client-to-client-reflection",
+			json_object_string_add(json_one_cluster, "clientToClientReflection",
 					       "always");
 		else
-			json_object_string_add(json_one_cluster, "client-to-client-reflection",
+			json_object_string_add(json_one_cluster, "clientToClientReflection",
 					       "never");
 	} else
-		json_object_string_add(json_one_cluster, "client-to-client-reflection",
-				       "not configured");
+		json_object_string_add(json_one_cluster, "clientToClientReflection",
+				       "notConfigured");
 	json_object_object_add(json_all_clusters, "global", json_one_cluster);
 
 	json_per_neighbor_clusters = json_object_new_array();
 	frr_each (per_neighbor_cluster_list, &bgp->per_neighbor_clusters, cluster) {
 		json_one_cluster = json_object_new_object();
 
-		json_object_string_addf(json_one_cluster, "cluster-id", "%pI4",
+		json_object_string_addf(json_one_cluster, "clusterId", "%pI4",
 					&cluster->cluster_id);
 		json_object_boolean_add(json_one_cluster, "global",
 					CHECK_FLAG(cluster->flags, CLUSTER_FLAG_GLOBAL));
@@ -12655,17 +12655,17 @@ DEFPY (show_bgp_clusters,
 			       CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER_CONFIGURED)) {
 			if (CHECK_FLAG(cluster->flags, CLUSTER_FLAG_CLIENT_TO_CLIENT_INTRA_CLUSTER))
 				json_object_string_add(json_one_cluster,
-						       "client-to-client-reflection", "always");
+						       "clientToClientReflection", "always");
 			else
 				json_object_string_add(json_one_cluster,
-						       "client-to-client-reflection", "never");
+						       "clientToClientReflection", "never");
 		} else
-			json_object_string_add(json_one_cluster, "client-to-client-reflection",
-					       "not configured");
+			json_object_string_add(json_one_cluster, "clientToClientReflection",
+					       "notConfigured");
 		json_object_int_add(json_one_cluster, "refcnt", cluster->refcnt);
 		json_object_array_add(json_per_neighbor_clusters, json_one_cluster);
 	}
-	json_object_object_add(json_all_clusters, "per-neighbor", json_per_neighbor_clusters);
+	json_object_object_add(json_all_clusters, "perNeighbor", json_per_neighbor_clusters);
 	vty_json(vty, json_all_clusters);
 
 	return CMD_SUCCESS;
@@ -16134,9 +16134,8 @@ static void bgp_show_peer_afi(struct vty *vty, struct peer *p, afi_t afi,
 						     "routeReflectorClient");
 
 		if (CHECK_FLAG(p->af_flags[afi][safi], PEER_FLAG_CLUSTER_ID))
-			json_object_string_add(json_addr, "clusterId",
-					       inet_ntop(AF_INET, &p->cluster[afi][safi],
-							 cluster_id, INET_ADDRSTRLEN));
+			json_object_string_addf(json_addr, "clusterId",
+					       "%pI4",cluster_id);
 
 		if (CHECK_FLAG(p->af_flags[afi][safi],
 			       PEER_FLAG_RSERVER_CLIENT))
